@@ -1,0 +1,7 @@
+# 把本文件复制为 Caddyfile，并把 your-domain.com 换成你的真实域名。
+# 域名解析：到你的域名商把 A 记录指向这台服务器的公网 IP。
+# Caddy 会自动申请/续期 HTTPS 证书（需 80 与 443 端口对外开放）。
+your-domain.com {
+	encode gzip
+	reverse_proxy app:3000
+}

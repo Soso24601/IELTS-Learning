@@ -1,0 +1,6 @@
+{
+  "name": "IELTS Vocabulary Builder",
+  "description": "An interactive IELTS vocabulary learning companion featuring structured word lists, Spaced Repetition flashcards, writing/dictation quizzes, and AI-powered mnemonics, context sentences, and essay generation to help you master IELTS vocabulary.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,37 @@
+# IELTS Vocabulary Builder — Docker Compose 部署
+# 用法：
+#   1) cp .env.example .env  并在 .env 里设置 APP_SECRET（见 README）
+#   2) cp Caddyfile.example Caddyfile  并把 your-domain.com 换成你的域名
+#   3) docker compose up -d --build
+#   4) 浏览器打开 https://your-domain.com
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /app/data
+    volumes:
+      - appdata:/app/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  appdata:
+  caddy_data:
+  caddy_config:
