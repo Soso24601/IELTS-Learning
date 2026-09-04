@@ -218,6 +218,8 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
     }
   };
 
+  if (!open) return null; // 未打开时不再渲染，保证弹窗可正常关闭
+
   const modalInput = inputCls;
 
   return (
