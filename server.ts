@@ -1067,341 +1067,317 @@ function getEmbedUrlFromUrl(url: string): string {
   return url;
 }
 
-// New: Crawler for Webpage Videos (Crawl video and bilingual subtitles sentence-by-sentence)
-app.post('/api/materials/crawl-video', async (req, res) => {
-  const { url, category } = req.body || {};
+// ============ 链接导入（视频 / 网页）：只产出“真实可得”的结果，禁止 AI 编造字幕 ============
+
+const HTTP_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const EMBED_PARAMS = '&high_quality=1&danmaku=0&autoplay=0';
+
+function youtubeEmbedFromId(id: string): string {
+  return `https://www.youtube.com/embed/${id}`;
+}
+
+/** 识别更多 YouTube 形式：youtu.be、v=、embed/、shorts/、live/ */
+function extractYouTubeIdAny(url: string): string | null {
+  if (!url) return null;
+  const path = url.split(/[?#]/)[0];
+  const m = path.match(/(?:youtu\.be\/|v=|embed\/|shorts\/|live\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+/** 单次手动跟随重定向，返回最终 Location（防 SSRF、防无限跳）。 */
+async function followRedirectOnce(url: string): Promise<string | null> {
   try {
-    if (!url) {
-      return res.status(400).json({ error: 'URL is required' });
+    await assertSafeHttpUrl(url);
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, {
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: { 'User-Agent': HTTP_UA },
+    });
+    clearTimeout(t);
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get('location');
+      if (loc) return new URL(loc, url).toString();
     }
-
-    const calculatedVideoUrl = getEmbedUrlFromUrl(url);
-
-    // 1. Scrape real plain text and metadata from webpage if possible
-    let scrapedTitle = '';
-    let scrapedDescription = '';
-    let scrapedContentText = '';
-    let isWebpageSuccessfullyScraped = false;
-
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      try {
-        // SSRF 防护：只允许抓取公网 https 目标，禁止内网/本机/元数据地址
-        await assertSafeHttpUrl(url);
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000); // 6s timeout
-
-        const fetchRes = await fetch(url, {
-          redirect: 'manual', // 不跟随重定向，防止跳到内网
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5'
-          }
-        });
-        clearTimeout(timeoutId);
-
-        if (fetchRes.ok) {
-          const html = await fetchRes.text();
-          scrapedContentText = stripHtml(html);
-          isWebpageSuccessfullyScraped = true;
-          
-          const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-          if (titleMatch && titleMatch[1]) {
-            scrapedTitle = titleMatch[1].trim();
-          }
-          
-          const descMatch = html.match(/<meta[^>]+name="description"[^>]+content="([^"]+)"/i) || 
-                            html.match(/<meta[^>]+content="([^"]+)"[^>]+name="description"/i);
-          if (descMatch && descMatch[1]) {
-            scrapedDescription = descMatch[1].trim();
-          }
-        }
-      } catch (err) {
-        console.warn('Webpage fetch for crawl-video failed or timed out:', err);
-      }
-    }
-
-    const ai = await getLLMClientForRequest(req);
-    
-    // Construct prompt. If we scraped content, we provide it to Gemini.
-    let prompt = `你是一个资深的雅思听力/口语教学博主，以及网络爬虫提取与内容精炼专家。擅长将热门网页、YouTube、Bilibili等博主的英文VLOG、演讲、纪录片或学术视频进行智能网页解析、内容提取并重构为高价值的雅思英语学习材料。
-当前用户提供了一个视频或网页链接: "${url}"，其指定的雅思科目分类为: "${category || 'listening'}"。
-
-请务必先通过谷歌搜索工具查找关于该链接/视频（如 Bilibili 视频号、BV 号、YouTube ID、或者视频标题/博主名）的真实音频转写文稿、中英字幕或详细内容介绍。
-请结合真实的网页与视频内容，智能爬取、提炼并输出一份高度吻合视频实际说话内容、学术与实用性完美交融的英语学习双语对照字幕文稿与雅思考点分析。
-
-要求：
-1. 智能生成一个富有吸引力的雅思学术VLOG或双语课程标题（如：【跟学姐沉浸式备考】用顶级词伙开启 productive 的一天、或者【学术博主日常】如何用地道表达跟导师讨论 Research Hypothesis 等）。
-2. 提供一段完整的视频大纲/核心概要（中文，100字左右，强调视频中的雅思口语/听力考点）。
-3. 智能提炼、还原或转写出该视频前 1 到 2 分钟内（或全视频，如果较短）的【8 到 15 句】高质量、高度还原视频原声、连贯的、符合母语英语博主口吻的字幕段落（总长约 150-250 词）。文稿中应自然、巧妙地融入 3 个以上高频雅思核心高分词汇（例如: ubiquitous, meticulous, alleviate, scrutinise, paradigm, advocate 等，并确保有难度、地道）。
-4. 【极其重要】提供完全吻合视频实际播放、且完全对齐英文句子发音起止的逐句时间轴信息 (Timeline)。每句话都必须有 "start" (开始秒数，可带小数) 和 "end" (结束秒数，可带小数)。起止时间必须连续且完全合理，不能重合，且累计总长必须覆盖 60 到 120 秒以上（例如第一句 0.0 - 5.5，第二句 5.5 - 12.0，依次递增直到最后一秒），以使得跟读与精听功能可以完美对齐视频。
-5. 提供每句英文最地道、精准的中文对照翻译。
-6. 精准提炼出这 3 个核心雅思高分学术单词，提供词性、中文、英文定义和雅思原创学术例句。
-
-请严格按照以下 JSON Schema 返回结果：
-{
-  "title": "视频VLOG标题（中文或中英混合）",
-  "summary": "视频概要/博主背景介绍（中文，强调视频中的雅思考点，100字以内）",
-  "videoUrl": "建议使用的网页视频源（如果是直接视频地址请保留；如果是Bilibili/YouTube我们会自动转换；如果是常规网页，请建议一个高清学术或备考相关的MP4链接）",
-  "transcript": "完整的英文视频文稿内容",
-  "subtitles": [
-    {
-      "id": "s1",
-      "start": 0.0,
-      "end": 5.5,
-      "text": "Hey everyone, welcome back to my weekly study vlog!",
-      "translation": "嘿大家，欢迎回到我的每周学习视频！"
-    }
-  ],
-  "vocab": [
-    {
-      "word": "单词",
-      "partOfSpeech": "词性(如 v. / adj.)",
-      "chinese": "中文释义",
-      "definition": "简要英文定义",
-      "example": "学术例句"
-    }
-  ]
+    if (res.url && res.url !== url) return res.url;
+    return null;
+  } catch {
+    return null;
+  }
 }
-`;
 
-    if (isWebpageSuccessfullyScraped) {
-      prompt += `
+/** 把各类视频链接解析成“真正可内嵌播放”的地址。返回 kind: youtube|bilibili|ted|direct|none */
+async function resolveVideoEmbedUrl(raw: string): Promise<{ videoUrl: string; kind: string }> {
+  let url = (raw || '').trim();
+  if (!url) return { videoUrl: '', kind: 'none' };
+  const lower = url.toLowerCase();
 
-【检测到网页爬取成功】以下是爬取到的真实网页文本内容和标题，请务必围绕这个真实主题或内容，提炼出完美的双语字幕段落与词汇！
-网页标题 (Scraped Title): "${scrapedTitle || 'None'}"
-网页描述 (Scraped Meta Description): "${scrapedDescription || 'None'}"
-网页文本片段 (Scraped Text Snippet):
-"""
-${scrapedContentText}
-"""
-`;
+  // 直接视频文件
+  if (/\.(mp4|webm|ogg|m3u8)(\?.*)?$/i.test(url)) return { videoUrl: url, kind: 'direct' };
+
+  // YouTube
+  if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
+    const id = extractYouTubeIdAny(url);
+    if (id) return { videoUrl: youtubeEmbedFromId(id), kind: 'youtube' };
+  }
+
+  // TED 演讲
+  if (lower.includes('ted.com/talks/')) {
+    return { videoUrl: url.replace(/ted\.com\/talks\//i, 'embed.ted.com/talks/'), kind: 'ted' };
+  }
+
+  // Bilibili（直接页 / 已是 player 页）
+  if (lower.includes('bilibili.com')) {
+    if (lower.includes('player.bilibili.com/player.html')) {
+      return { videoUrl: url, kind: 'bilibili' };
     }
+    const bv = url.match(/BV[a-zA-Z0-9]{10}/i);
+    if (bv) return { videoUrl: `https://player.bilibili.com/player.html?bvid=${bv[0]}${EMBED_PARAMS}`, kind: 'bilibili' };
+    const av = url.match(/(?:av|aid=)(\d+)/i);
+    if (av) return { videoUrl: `https://player.bilibili.com/player.html?aid=${av[1]}${EMBED_PARAMS}`, kind: 'bilibili' };
+    return { videoUrl: '', kind: 'bilibili' }; // bilibili 域名但未能解析出号
+  }
 
-    // Try YouTube direct subtitle fetch first if url is a YouTube link
-    const videoIdForDirect = extractYoutubeVideoId(url);
-    if (videoIdForDirect) {
-      try {
-        console.log(`[Crawl Video] Detected YouTube URL. Attempting direct CC subtitle extraction for video ID: ${videoIdForDirect}`);
-        const captionBaseUrl = await fetchYoutubeCaptionUrl(videoIdForDirect);
-        if (captionBaseUrl) {
-          const captionJsonUrl = `${captionBaseUrl}${captionBaseUrl.includes('?') ? '&' : '?'}fmt=json`;
-          const captionRes = await fetch(captionJsonUrl);
-          if (captionRes.ok) {
-            const captionJson = await captionRes.json();
-            const events = captionJson.events || [];
-            const directSubtitles: any[] = [];
-            let idCounter = 1;
-
-            for (const event of events) {
-              if (!event.segs || event.segs.length === 0) continue;
-              const text = event.segs.map((s: any) => s.utf8).join('').replace(/\s+/g, ' ').trim();
-              if (!text || text.toLowerCase() === '[music]' || text.toLowerCase() === 'music') continue;
-
-              const startMs = event.tStartMs || 0;
-              const durationMs = event.dDurationMs || 0;
-              directSubtitles.push({
-                id: `yt-${idCounter++}`,
-                start: parseFloat((startMs / 1000).toFixed(2)),
-                end: parseFloat(((startMs + durationMs) / 1000).toFixed(2)),
-                text,
-                translation: ''
-              });
-            }
-
-            if (directSubtitles.length > 0) {
-              console.log(`[Crawl Video] Successfully extracted ${directSubtitles.length} direct subtitles. Running Gemini to generate IELTS study material based on real transcript...`);
-              const truncatedSubtitles = directSubtitles.slice(0, 150); // take first 150 sentences to keep prompt context focused
-              const fullTranscriptText = truncatedSubtitles.map(s => s.text).join(' ');
-
-              // Ask Gemini to translate the real subtitles and generate study assets (title, summary, vocab)
-              const directPrompt = `你是一个资深的雅思听力/口语教学博主，以及大语言模型智能内容提炼专家。
-我们有一段从真实 YouTube 视频中提取的英文 CC 字幕文稿，内容如下：
-"""
-${fullTranscriptText}
-"""
-
-请执行以下任务：
-1. 智能生成一个富有吸引力的雅思双语备考标题（中文或中英混合，如：【跟学姐沉浸式备考】用顶级词伙开启 productive 的一天）。
-2. 提供一段完整的视频大纲/核心概要（中文，100字左右，强调视频中的雅思口语/听力考点）。
-3. 智能翻译以下字幕，为每条字幕生成对应的中文翻译：
-${JSON.stringify(truncatedSubtitles.map(s => ({ id: s.id, text: s.text })))}
-4. 从英文文稿中提炼 3 个高频核心雅思高分学术单词，提供词性、中文、英文定义和雅思原创学术例句。
-
-请严格按照以下 JSON Schema 返回结果：
-{
-  "title": "视频VLOG标题",
-  "summary": "视频概要/博主背景介绍（100字以内）",
-  "vocab": [
-    {
-      "word": "单词",
-      "partOfSpeech": "词性",
-      "chinese": "中文释义",
-      "definition": "英文简要定义",
-      "example": "学术例句"
+  // b23.tv 等短链：跟随重定向后重新识别
+  if (/^https?:\/\/(b23\.tv|bili2233\.cn|shorturl\.at|dwz\.cn)/i.test(lower)) {
+    const finalUrl = await followRedirectOnce(url);
+    if (finalUrl && finalUrl !== url) {
+      const r = await resolveVideoEmbedUrl(finalUrl);
+      if (r.kind !== 'none') return r;
     }
-  ],
-  "translations": [
-    { "id": "yt-1", "translation": "高水准中文翻译" }
-  ]
+  }
+
+  return { videoUrl: '', kind: 'none' };
 }
-`;
 
-              const directResponse = await ai.models.generateContent({
-                model: 'gemini-3.6-flash',
-                contents: directPrompt,
-                config: {
-                  responseMimeType: 'application/json',
-                  responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                      title: { type: Type.STRING },
-                      summary: { type: Type.STRING },
-                      vocab: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            word: { type: Type.STRING },
-                            partOfSpeech: { type: Type.STRING },
-                            chinese: { type: Type.STRING },
-                            definition: { type: Type.STRING },
-                            example: { type: Type.STRING }
-                          },
-                          required: ['word', 'partOfSpeech', 'chinese', 'definition', 'example']
-                        }
-                      },
-                      translations: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            id: { type: Type.STRING },
-                            translation: { type: Type.STRING }
-                          },
-                          required: ['id', 'translation']
-                        }
-                      }
-                    },
-                    required: ['title', 'summary', 'vocab', 'translations']
-                  }
+/** 抓取普通网页的真实正文与标题（SSRF 防护 + 手动重定向）。 */
+async function scrapeWebpage(url: string): Promise<{ ok: boolean; title: string; description: string; text: string }> {
+  try {
+    await assertSafeHttpUrl(url);
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, {
+      redirect: 'manual',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': HTTP_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+      },
+    });
+    clearTimeout(t);
+    if (!res.ok) return { ok: false, title: '', description: '', text: '' };
+    const html = await res.text();
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const descMatch =
+      html.match(/<meta[^>]+name="description"[^>]+content="([^"]+)"/i) ||
+      html.match(/<meta[^>]+content="([^"]+)"[^>]+name="description"/i);
+    return {
+      ok: true,
+      title: titleMatch?.[1]?.trim() || '',
+      description: descMatch?.[1]?.trim() || '',
+      text: stripHtml(html),
+    };
+  } catch (e: any) {
+    console.warn('[import-link] scrapeWebpage failed:', e?.message);
+    return { ok: false, title: '', description: '', text: '' };
+  }
+}
+
+/** 抓取 YouTube 官方字幕（timedtext），返回真实逐句字幕数组；取不到返回 null。 */
+async function fetchYouTubeRealSubtitles(videoId: string): Promise<any[] | null> {
+  try {
+    const captionBaseUrl = await fetchYoutubeCaptionUrl(videoId);
+    if (!captionBaseUrl) return null;
+    const captionJsonUrl = `${captionBaseUrl}${captionBaseUrl.includes('?') ? '&' : '?'}fmt=json`;
+    const res = await fetch(captionJsonUrl);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const events: any[] = json.events || [];
+    const subs: any[] = [];
+    let c = 1;
+    for (const ev of events) {
+      if (!ev.segs || ev.segs.length === 0) continue;
+      const text = ev.segs
+        .map((s: any) => s.utf8 || '')
+        .join('')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!text || /^\[music\]$/i.test(text) || /^music$/i.test(text)) continue;
+      const startMs = ev.tStartMs || 0;
+      const durMs = ev.dDurationMs || 0;
+      subs.push({
+        id: `yt-${c++}`,
+        start: parseFloat((startMs / 1000).toFixed(2)),
+        end: parseFloat(((startMs + durMs) / 1000).toFixed(2)),
+        text,
+        translation: '',
+      });
+    }
+    return subs.length > 0 ? subs : null;
+  } catch (e: any) {
+    console.warn('[import-link] fetchYouTubeRealSubtitles failed:', e?.message);
+    return null;
+  }
+}
+
+// 链接导入（原名 crawl-video，路径保留以兼容前端；语义 = 导入链接，不编造字幕）
+app.post('/api/materials/crawl-video', async (req, res) => {
+  const { url } = req.body || {};
+  try {
+    if (!url || typeof url !== 'string' || !url.trim()) {
+      return res.status(400).json({ error: '请提供需要导入的链接。' });
+    }
+    const inputUrl = url.trim();
+
+    // 1) 解析成“真正可内嵌”的视频地址（含 b23 短链展开）
+    const resolved = await resolveVideoEmbedUrl(inputUrl);
+
+    // 2) YouTube：优先尝试官方 CC（真实字幕）
+    const ytId = extractYouTubeIdAny(inputUrl) || extractYouTubeIdAny(resolved.videoUrl);
+    if (ytId) {
+      const embedUrl = youtubeEmbedFromId(ytId);
+      try {
+        const real = await fetchYouTubeRealSubtitles(ytId);
+        if (real && real.length > 0) {
+          const ai = await getLLMClientForRequest(req);
+          const truncated = real.slice(0, 100);
+          const aiPrompt = `你是一位雅思英语教学专家。下面是从某个 YouTube 视频抓取到的【真实英文 CC 字幕】。
+请只依据这些真实字幕完成任务，不要编造正文之外的内容：
+1) 生成一个简洁吸引人的中文标题(title)。
+2) 用中文写一段视频概要(summary，80字以内)。
+3) 为下面列表中每条字幕生成精准中文翻译，放入 translations 数组（每条形如 {"id":"yt-1","translation":"中文"}）。
+4) 从真实文稿中提炼 3 个雅思高频学术词放入 vocab。
+
+【真实字幕片段】
+"""
+${truncated
+    .map((s: any) => `${s.id} [${s.start}-${s.end}] ${s.text}`)
+    .join('\n')}
+"""
+
+只返回 JSON：{"title":"","summary":"","translations":[{"id":"yt-1","translation":""}],"vocab":[{"word":"","partOfSpeech":"","chinese":"","definition":"","example":""}]}`;
+
+          let title = '【YouTube】真实字幕精学材料';
+          let summary = '基于该 YouTube 视频官方字幕提取的真实英语材料。';
+          let vocab: any[] = [];
+          const transMap = new Map<string, string>();
+          try {
+            const resp = await ai.models.generateContent({
+              model: 'gemini-3.6-flash',
+              contents: aiPrompt,
+              config: { responseMimeType: 'application/json' },
+            });
+            const parsed: any = safeJSONParse(resp.text);
+            if (parsed) {
+              if (parsed.title) title = String(parsed.title);
+              if (parsed.summary) summary = String(parsed.summary);
+              if (Array.isArray(parsed.vocab)) vocab = parsed.vocab;
+              if (Array.isArray(parsed.translations)) {
+                for (const t of parsed.translations) {
+                  if (t && t.id) transMap.set(String(t.id), t.translation || '');
                 }
-              });
-
-              const parsedDirect = safeJSONParse(directResponse.text);
-              const translationMap = new Map();
-              if (parsedDirect && Array.isArray(parsedDirect.translations)) {
-                parsedDirect.translations.forEach((t: any) => {
-                  translationMap.set(t.id, t.translation);
-                });
               }
-
-              const alignedSubtitles = truncatedSubtitles.map(s => ({
-                ...s,
-                translation: translationMap.get(s.id) || '（暂无中文翻译）'
-              }));
-
-              return res.json({
-                title: parsedDirect.title || '【YouTube CC】精学材料',
-                summary: parsedDirect.summary || '基于 YouTube 官方 CC 提取并提炼的雅思双语材料。',
-                videoUrl: calculatedVideoUrl || url,
-                transcript: fullTranscriptText,
-                subtitles: alignedSubtitles,
-                vocab: parsedDirect.vocab || []
-              });
             }
+          } catch (e: any) {
+            console.warn('[import-link] YouTube CC 翻译失败，将保留英文原文:', e?.message);
           }
+          const subtitles = truncated.map((s: any) => ({ ...s, translation: transMap.get(s.id) || '' }));
+          return res.json({
+            title,
+            summary,
+            videoUrl: embedUrl,
+            kind: 'youtube',
+            captions: 'official',
+            transcript: subtitles.map((s: any) => s.text).join(' '),
+            subtitles,
+            vocab,
+          });
         }
-      } catch (err: any) {
-        console.warn('[Crawl Video] Direct CC flow failed or got blocked. Falling back to Google Search scraper...', err.message);
+      } catch (e: any) {
+        console.warn('[import-link] YouTube CC 流程异常，退化为仅嵌视频:', e?.message);
       }
+      // 无官方字幕 → 只嵌原视频，不生成任何内容
+      return res.json({
+        videoUrl: embedUrl,
+        kind: 'youtube',
+        captions: 'none',
+        title: '',
+        summary: '',
+        transcript: '',
+        subtitles: [],
+        vocab: [],
+        note: '已嵌入该 YouTube 原视频。此视频没有可用的官方字幕，请自行准备字幕文本并在下方粘贴，再使用「AI 分段 + 逐句中译」。',
+      });
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        tools: [{ googleSearch: {} }],
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            summary: { type: Type.STRING },
-            videoUrl: { type: Type.STRING },
-            transcript: { type: Type.STRING },
-            subtitles: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  start: { type: Type.NUMBER },
-                  end: { type: Type.NUMBER },
-                  text: { type: Type.STRING },
-                  translation: { type: Type.STRING }
-                },
-                required: ['id', 'start', 'end', 'text', 'translation']
-              }
-            },
-            vocab: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  word: { type: Type.STRING },
-                  partOfSpeech: { type: Type.STRING },
-                  chinese: { type: Type.STRING },
-                  definition: { type: Type.STRING },
-                  example: { type: Type.STRING }
-                },
-                required: ['word', 'partOfSpeech', 'chinese', 'definition', 'example']
-              }
-            }
-          },
-          required: ['title', 'summary', 'videoUrl', 'transcript', 'subtitles', 'vocab']
+    // 3) 其它可嵌入视频（B站 / TED / mp4 直链）
+    if (resolved.kind !== 'none') {
+      return res.json({
+        videoUrl: resolved.videoUrl,
+        kind: resolved.kind,
+        captions: 'none',
+        title: '',
+        summary: '',
+        transcript: '',
+        subtitles: [],
+        vocab: [],
+        note:
+          resolved.kind === 'direct'
+            ? ''
+            : '已嵌入该视频原播放器。由于该视频平台不开放字幕读取，请自行准备字幕文本并在下方粘贴后使用「AI 分段 + 逐句中译」。',
+      });
+    }
+
+    // 4) 普通网页：抓真实正文，正文足够时才基于真实内容做摘要/生词（不是字幕）
+    const page = await scrapeWebpage(inputUrl);
+    const pageText = (page.text || '').trim();
+    if (page.ok && pageText.length > 60) {
+      const ai = await getLLMClientForRequest(req);
+      const prompt = `你是一位雅思英语学习助手。下面是从一个网页抓取到的【真实英文正文】。请只依据这段文字输出（不要编造正文外内容）：
+1) title：简洁中文标题（若已知道则用，否则概括）
+2) summary：中文核心要点总结（100字以内）
+3) vocab：从真实正文里提炼 3-5 个雅思核心词，每项含 word/partOfSpeech/chinese/definition/example
+
+【真实正文】
+"""
+${pageText.slice(0, 4000)}
+"""
+
+只返回 JSON：{"title":"","summary":"","vocab":[{"word":"","partOfSpeech":"","chinese":"","definition":"","example":""}]}`;
+      let out: any = { title: page.title || '网页材料', summary: '', vocab: [] };
+      try {
+        const resp = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: prompt,
+          config: { responseMimeType: 'application/json' },
+        });
+        const parsed: any = safeJSONParse(resp.text);
+        if (parsed && typeof parsed === 'object') {
+          out = { ...out, ...parsed };
         }
+      } catch (e: any) {
+        console.warn('[import-link] 网页摘要生成失败，返回原文:', e?.message);
       }
+      return res.json({
+        ...out,
+        kind: 'webpage',
+        captions: 'none',
+        videoUrl: '',
+        transcript: pageText,
+        vocab: Array.isArray(out.vocab) ? out.vocab : [],
+      });
+    }
+
+    return res.status(422).json({
+      error:
+        '无法读取该链接的真实内容。请改用 YouTube / B站 / TED 视频链接、或 mp4 直链；也可以直接粘贴文本/字幕来创建材料。',
     });
-
-    const result = safeJSONParse(response.text);
-
-    if (calculatedVideoUrl && (calculatedVideoUrl.includes('embed') || calculatedVideoUrl.includes('player.bilibili') || calculatedVideoUrl.includes('mp4') || calculatedVideoUrl.includes('youtube') || calculatedVideoUrl.includes('bilibili'))) {
-      result.videoUrl = calculatedVideoUrl;
-    } else if (!result.videoUrl || !result.videoUrl.startsWith('http')) {
-      result.videoUrl = "https://assets.mixkit.co/videos/preview/mixkit-studying-at-home-with-a-laptop-42352-large.mp4";
-    }
-
-    res.json(result);
   } catch (error: any) {
-    console.error('Error crawling video webpage:', error);
-    const calculatedVideoUrl = getEmbedUrlFromUrl(url);
-    res.json({
-      title: "【沉浸式备考VLOG】牛津学姐的 productive 一天 | 学术核心词伙跟读",
-      summary: "一位英语博主分享自己在大学图书馆沉浸式学习雅思学术英语的一天。视频中自然运用了高难度的学术词汇与短语搭配，是听力和口语跟读的极佳语境素材。",
-      videoUrl: calculatedVideoUrl || "https://assets.mixkit.co/videos/preview/mixkit-studying-at-home-with-a-laptop-42352-large.mp4",
-      transcript: "Hey everyone, welcome back to my weekly vlog! Today I'm tackling some complex academic articles in the university library. In order to mitigate our study anxiety, we need to implement a meticulous plan. Fostering an empirical approach to IELTS preparation will ultimately help us alleviate pressure and achieve our target scores. Let's study together! In addition, we must scrutinize the literature closely. Gathering relevant data is ubiquitous in scholastic research. We should advocate for stronger methodologies. This dynamic paradigm helps us acquire deep insights and excel in our speaking skills.",
-      subtitles: [
-        { "id": "s1", "start": 0.0, "end": 4.5, "text": "Hey everyone, welcome back to my weekly vlog!", "translation": "嘿大家，欢迎回到我的每周学习视频！" },
-        { "id": "s2", "start": 4.5, "end": 9.5, "text": "Today I'm tackling some complex academic articles in the university library.", "translation": "今天我正在大学图书馆攻读一些复杂的学术文献。" },
-        { "id": "s3", "start": 9.5, "end": 14.2, "text": "In order to mitigate our study anxiety, we need to implement a meticulous plan.", "translation": "为了缓解我们的学习焦虑，我们需要执行一个细致周密的计划。" },
-        { "id": "s4", "start": 14.2, "end": 20.5, "text": "Fostering an empirical approach to IELTS preparation will ultimately help us alleviate pressure.", "translation": "在雅思备考中培养一种基于实证的方法，最终会帮助我们减轻压力。" },
-        { "id": "s5", "start": 20.5, "end": 26.0, "text": "And achieve our target scores. Let's study together!", "translation": "并达到我们的目标分数。让我们一起加油学习吧！" },
-        { "id": "s6", "start": 26.0, "end": 31.5, "text": "In addition, we must scrutinize the literature closely and take thorough notes.", "translation": "此外，我们必须仔细审视文献并做好详尽的笔记。" },
-        { "id": "s7", "start": 31.5, "end": 37.0, "text": "Gathering relevant academic data is ubiquitous in modern scholastic research.", "translation": "在现代学术研究中，搜集相关的学术数据是无处不在的。" },
-        { "id": "s8", "start": 37.0, "end": 42.5, "text": "Therefore, we should advocate for stronger research methodologies to prove our hypothesis.", "translation": "因此，我们应该倡导使用更强大的研究方法来证明我们的假设。" },
-        { "id": "s9", "start": 42.5, "end": 48.0, "text": "Adopting this dynamic paradigm will certainly help us acquire deep insights.", "translation": "采用这种动态范式无疑将帮助我们获得深刻的见解。" },
-        { "id": "s10", "start": 48.0, "end": 53.5, "text": "And allow us to excel in our academic writing and speaking skills efficiently.", "translation": "并使我们能够高效地在学术写作和口语技能中脱颖而出。" },
-        { "id": "s11", "start": 53.5, "end": 58.0, "text": "Consistency and dedication are the key drivers to high-level language fluency.", "translation": "持之以恒和专注是高水平语言流畅度的关键驱动因素。" },
-        { "id": "s12", "start": 58.0, "end": 63.5, "text": "Let's stay motivated and continue pushing the boundaries of our intellectual growth.", "translation": "让我们保持动力，继续推动我们智力成长的极限。" }
-      ],
-      vocab: [
-        { "word": "mitigate", "partOfSpeech": "v.", "chinese": "缓解，减轻", "definition": "Make less severe, serious, or painful.", "example": "Meticulous planning can mitigate the challenges of preparation." },
-        { "word": "meticulous", "partOfSpeech": "adj.", "chinese": "细致的，一丝不苟的", "definition": "Showing great attention to detail; very careful and precise.", "example": "The researcher carried out a meticulous analysis of the survey data." },
-        { "word": "alleviate", "partOfSpeech": "v.", "chinese": "减轻，缓和", "definition": "Make (suffering, deficiency, or a problem) less severe.", "example": "Taking regular study breaks can help alleviate academic stress." }
-      ]
-    });
+    console.error('Error importing link:', error);
+    return res.status(500).json({ error: error?.message || '导入链接失败' });
   }
 });
 

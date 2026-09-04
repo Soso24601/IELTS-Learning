@@ -242,6 +242,7 @@ export default function MaterialsLibrary({
   // Video and Subtitle Study Player States
   const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
   const [isCrawlingVideo, setIsCrawlingVideo] = useState<boolean>(false);
+  const [crawlNotice, setCrawlNotice] = useState<string>('');
   const [activeSubtitleId, setActiveSubtitleId] = useState<string | null>(null);
   const [isAutoSyncSubtitles, setIsAutoSyncSubtitles] = useState<boolean>(true);
   
@@ -1390,66 +1391,76 @@ export default function MaterialsLibrary({
     }
   };
 
-  // Video and Web Link Crawler Action Handler
+  // Import link (video embed / webpage real content). 不再让 AI 编造字幕/文稿
   const handleCrawlVideo = async (material: StudyMaterial) => {
-    const videoUrlToCrawl = material.url || material.content || '';
-    if (!videoUrlToCrawl.trim()) {
-      alert('请先输入或提供有效的视频网页链接。');
+    const linkToImport = material.url || material.content || '';
+    if (!linkToImport.trim()) {
+      alert('请先为该材料填写网页/视频链接。');
       return;
     }
 
     setIsCrawlingVideo(true);
+    setCrawlNotice('');
     try {
       const response = await fetch('/api/materials/crawl-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: videoUrlToCrawl, category: activeCategory })
+        body: JSON.stringify({ url: linkToImport, category: activeCategory })
       });
 
-      if (!response.ok) {
-        throw new Error('视频与字幕提取解析服务返回错误');
+      let result: any = null;
+      try { result = await response.json(); } catch { /* ignore non-json */ }
+
+      if (!response.ok || !result) {
+        throw new Error(result?.error || result?.message || '导入链接失败，请稍后重试');
       }
 
-      const result = await response.json();
+      const hasRealSubtitles = Array.isArray(result.subtitles) && result.subtitles.length > 0;
 
-      // Formulate updated materials list
       const updatedMaterials = materials.map((m) => {
-        if (m.id === material.id) {
+        if (m.id !== material.id) return m;
+        const base = {
+          ...m,
+          name: result.title && String(result.title).trim() ? String(result.title).trim() : m.name,
+        };
+        // 有可内嵌的真实视频地址 → 升级为视频材料并指向该地址（可能是解析后的 embed）
+        const withVideo = result.videoUrl
+          ? { ...base, url: String(result.videoUrl), type: 'video' as MaterialType }
+          : base;
+
+        if (hasRealSubtitles) {
+          // 真实字幕（目前仅 YouTube 官方 CC 可自动拿到）
           return {
-            ...m,
-            name: result.title || m.name,
-            content: result.transcript || m.content,
-            url: result.videoUrl || 'https://assets.mixkit.co/videos/preview/mixkit-studying-at-home-with-a-laptop-42352-large.mp4',
-            type: 'video' as MaterialType, // Auto-upgrade to interactive video type!
-            summary: JSON.stringify({
-              summary: result.summary,
-              keyVocabulary: result.vocab,
-              grammarPoints: [],
-              collocations: []
-            }),
-            sentences: result.subtitles ? result.subtitles.map((s: any) => s.text) : [],
-            videoSubtitles: result.subtitles || []
+            ...withVideo,
+            content: result.transcript || withVideo.content,
+            sentences: result.subtitles.map((s: any) => s.text),
+            videoSubtitles: result.subtitles,
           };
         }
-        return m;
+        // 普通网页抓到的真实正文：更新正文，但保持原有类型与字幕不动（不生成假字幕）
+        return result.videoUrl
+          ? withVideo
+          : { ...withVideo, content: result.transcript || withVideo.content };
       });
 
       setMaterials(updatedMaterials);
       localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
 
-      // Synchronize current AI panel summary and vocab state
-      setAiSummary({
-        summary: result.summary,
-        keyVocabulary: result.vocab,
-        grammarPoints: [],
-        collocations: []
-      });
+      // 有真实内容摘要时同步 AI 面板
+      if (result.summary || (Array.isArray(result.vocab) && result.vocab.length > 0)) {
+        setAiSummary({
+          summary: result.summary || '',
+          keyVocabulary: Array.isArray(result.vocab) ? result.vocab : [],
+          grammarPoints: [],
+          collocations: []
+        });
+      }
 
-      // Clear selection note state
+      if (result.note) setCrawlNotice(String(result.note));
       setSelectionState(null);
     } catch (err: any) {
-      console.error('Error crawling/parsing video:', err);
-      alert('视频与双语字幕生成失败，请重试: ' + err.message);
+      console.error('Import link error:', err);
+      alert((err && err.message) || '导入链接失败，请重试');
     } finally {
       setIsCrawlingVideo(false);
     }
@@ -3139,13 +3150,55 @@ export default function MaterialsLibrary({
                             </div>
                             <div>
                               <h3 className="font-serif font-bold text-stone-950 text-base">
-                                📋 获取英文字幕与双语对照文稿
+                                🎬 视频已就绪 · 添加字幕开始精听
                               </h3>
                               <p className="text-[11px] text-stone-500 leading-relaxed">
-                                AI 顶级大模型将自动按语意与自然停顿切分为<b>连续的雅思高分学术段落 (Paragraphs)</b>，并全自动生成中文翻译与精确的时间轴，开启影子跟读精听！
+                                下方会内嵌<b>该链接对应的原视频</b>，可直接播放。
+                                字幕需要由你提供：YouTube 可尝试「抓取官方字幕」；B站 / TED / 其它请自行获取字幕文本，
+                                在下方<b>粘贴字幕/文稿</b>后用「AI 分段 + 逐句中译」即可精听。系统不再凭空编造字幕。
                               </p>
                             </div>
                           </div>
+
+                          {/* 导入结果 / 注意事项 */}
+                          {crawlNotice && (
+                            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
+                              ✅ {crawlNotice}
+                            </div>
+                          )}
+
+                          {/* 无字幕时也内嵌原视频，让用户先看到真实视频 */}
+                          {activeMaterial.url &&
+                            (() => {
+                              const u = activeMaterial.url;
+                              const isDirectFile = /\.(mp4|webm|ogg)(\?.*)?$/i.test(u);
+                              const isEmbeddable = isEmbedUrl(u);
+                              if (!isDirectFile && !isEmbeddable) {
+                                return (
+                                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed">
+                                    ⚠️ 此链接暂无法自动内嵌播放。请改用 YouTube / B站 / TED 视频链接或 <b>mp4 直链</b>；
+                                    若是普通网页，可点下方「从链接导入」提取正文要点。
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div className="bg-stone-950 border border-stone-800 rounded-2xl overflow-hidden shadow-md">
+                                  {isEmbeddable ? (
+                                    <div className="relative aspect-video bg-black">
+                                      <iframe
+                                        src={iframeSrc || u}
+                                        title="Video preview"
+                                        className="w-full h-full border-0"
+                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                        allowFullScreen
+                                      />
+                                    </div>
+                                  ) : (
+                                    <video src={u} controls className="w-full aspect-video outline-hidden bg-black" />
+                                  )}
+                                </div>
+                              );
+                            })()}
 
                           {activeMaterial.url && (
                             <div className="bg-amber-50/40 border border-amber-200/60 rounded-xl p-4 space-y-3 mb-2">
@@ -3155,10 +3208,12 @@ export default function MaterialsLibrary({
                                 </div>
                                 <div className="space-y-1">
                                   <h4 className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                                    🌐 一键 AI 智能爬取网页内容 / 视频双语字幕
+                                    🌐 从链接导入内容（视频 / 网页）
                                   </h4>
-                                  <p className="text-[10.5px] text-stone-500 leading-relaxed">
-                                    系统检测到当前材料包含在线链接。您可以直接点击下方按钮，让 AI 智能在线爬虫自动为您获取网页文字、YouTube 字幕、Bilibili 或 TED 视频文稿，并生成精准中英双语听抄内容！
+                                  <p className="text-[10.5px] text-stone-500 leading-relaxed space-y-0.5">
+                                    · <b>YouTube</b>：尝试自动抓取官方字幕（真实）；无字幕则只嵌入原视频。<br />
+                                    · <b>B站 / TED / mp4 直链</b>：嵌入原视频播放，字幕请自行粘贴到下方区域。<br />
+                                    · <b>普通网页</b>：抓取真实正文并生成要点（不会编造字幕）。
                                   </p>
                                 </div>
                               </div>
@@ -3170,12 +3225,12 @@ export default function MaterialsLibrary({
                                 {isCrawlingVideo ? (
                                   <>
                                     <span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-stone-950 border-t-transparent"></span>
-                                    <span>AI 正在实时爬取并解析网页/字幕内容 (可能需要 15s-30s)...</span>
+                                    <span>正在解析链接并嵌入视频…</span>
                                   </>
                                 ) : (
                                   <>
                                     <Sparkles className="h-4 w-4" />
-                                    <span>立即一键 AI 智能爬取该链接内容</span>
+                                    <span>从链接导入（嵌入原视频 / 提取正文）</span>
                                   </>
                                 )}
                               </button>
@@ -3331,7 +3386,9 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                           </div>
 
                           <div className="text-[10px] text-stone-400 leading-normal bg-amber-50/40 p-3 rounded-lg border border-amber-100/30">
-                            💡 <b>提示：</b> 粘贴完整文稿后，AI 会自动为您把文段重构成一连串发音自然的连续高分雅思双语对照句子，并根据视频全长（当前视频约 <b>{maxSubtitleTime.toFixed(1)} 秒</b>）合理分摊时间。生成后您仍可以点击 “🔧 修正与调整” 对各句子的细节内容或时间做任意微调！
+                            💡 <b>提示：</b> AI 只基于你<b>粘贴的真实字幕</b>做切句与中英对照，不会编造内容。若字幕没有时间戳，
+                            AI 会按视频总长（约 <b>{maxSubtitleTime.toFixed(1)} 秒</b>）估算时间，仅供排序展示、不保证与画面逐帧同步；
+                            如需精确跳转，请粘贴<b>带时间戳的字幕</b>，或对 YouTube 用「抓取官方字幕」。生成后可用 “🔧 修正与调整” 微调任意句子。
                           </div>
                         </div>
                       ) : (
