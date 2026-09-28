@@ -4645,6 +4645,17 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                       2. <b>传统文本直接导入:</b> 按回车换行拆分每一行字幕。如果以 <code className="font-mono bg-stone-100 px-1 py-0.5 text-red-600">[0.0-5.5] English | Chinese</code> 的标准格式贴入，系统将自动高精度解包该时间段。
                     </p>
 
+                    {/(youtube\.com|youtu\.be)/i.test(ccVideoUrl) && (
+                      <button
+                        type="button"
+                        onClick={handleExtractCCSubtitles}
+                        disabled={isExtractingCC}
+                        className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-700 disabled:bg-stone-300 text-white rounded-xl text-xs font-bold transition cursor-pointer"
+                      >
+                        {isExtractingCC ? '正在获取并翻译 YouTube 官方字幕…' : '抓取 YouTube 官方字幕'}
+                      </button>
+                    )}
+
                     <textarea
                       rows={18}
                       value={rawSubtitlePaste}
