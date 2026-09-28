@@ -60,14 +60,15 @@ export default function QuizEngine({
   };
 
   // Generate a random quiz
-  const handleStartQuiz = () => {
-    if (vocabulary.length < 4) {
-      alert('词库中单词过少，请先添加更多单词！');
+  const handleStartQuiz = (sourceWords: IELTSWord[] = vocabulary) => {
+    const minimumWords = selectedType === 'multiple-choice' ? 4 : 1;
+    if (sourceWords.length < 1 || (selectedType === 'multiple-choice' && vocabulary.length < minimumWords)) {
+      alert(selectedType === 'multiple-choice' ? '选择题需要至少 4 个单词来生成选项，请先扩充词库。' : '词库中没有可练习的单词，请先添加单词！');
       return;
     }
 
-    const shuffled = [...vocabulary].sort(() => 0.5 - Math.random());
-    const selectedWords = shuffled.slice(0, Math.min(questionCount, vocabulary.length));
+    const shuffled = [...sourceWords].sort(() => 0.5 - Math.random());
+    const selectedWords = shuffled.slice(0, Math.min(questionCount, sourceWords.length));
 
     const generatedQuestions: QuizQuestion[] = selectedWords.map((word, index) => {
       const qId = `q-${index}`;
@@ -181,7 +182,7 @@ export default function QuizEngine({
       }
     } else {
       // Quiz completed!
-      onRecordQuizResult(score + (questions[currentIdx].isCorrect ? 0 : 0), questions.length); // wait, the final score was already computed in handleSubmit
+      onRecordQuizResult(score, questions.length);
       setMode('completed');
     }
   };
@@ -519,7 +520,7 @@ export default function QuizEngine({
           </div>
 
           {/* Mistake highlights & review */}
-          {score < questions.length && (
+          {questions.some(q => !q.isCorrect) && (
             <div className="text-left space-y-2.5 max-w-sm mx-auto bg-stone-50/50 p-4 rounded-2xl border border-stone-200/50">
               <h4 className="text-xs font-serif font-bold text-stone-700 flex items-center gap-1">
                 <AlertCircle className="h-3.5 w-3.5 text-red-500" /> 本轮错词（建议加入星标生词）：
@@ -542,6 +543,15 @@ export default function QuizEngine({
 
           {/* Controls */}
           <div className="pt-4 flex gap-3 justify-center max-w-sm mx-auto">
+            {questions.some(q => !q.isCorrect) && (
+              <button
+                id="btn-quiz-review-mistakes"
+                onClick={() => handleStartQuiz(questions.filter(q => !q.isCorrect).map(q => q.word))}
+                className="flex-1 py-3 px-4 bg-amber-100 hover:bg-amber-200 rounded-xl text-xs font-semibold text-amber-900 transition flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="h-4 w-4" /> 重练错词（{questions.filter(q => !q.isCorrect).length}）
+              </button>
+            )}
             <button
               id="btn-quiz-retry"
               onClick={() => setMode('setup')}

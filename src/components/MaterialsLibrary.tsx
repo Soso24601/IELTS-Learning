@@ -1508,7 +1508,7 @@ export default function MaterialsLibrary({
       }
     } catch (err: any) {
       console.error('Error extracting CC:', err);
-      alert('提取/翻译 CC 字幕失败: ' + err.message + '\n请确认视频链接正确，且该视频在 YouTube 已经开启了 CC 字幕！');
+      alert(err.message || '无法获取该视频的官方字幕。请粘贴真实文稿或字幕，再使用 AI 翻译和分段。');
     } finally {
       setIsExtractingCC(false);
     }

@@ -1605,98 +1605,11 @@ JSON Schema 结构：
     });
 
   } catch (error: any) {
-    console.warn(`Direct YouTube CC extraction failed, running Google Search-grounded AI fallback generator... Reason: ${error.message}`);
-    try {
-      // 1. Fetch title & author from YouTube public oEmbed API which is never blocked
-      const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-      const oembedRes = await fetch(oembedUrl);
-      let videoTitle = 'YouTube Study Video';
-      let author = 'YouTube Creator';
-
-      if (oembedRes.ok) {
-        const oembedData = await oembedRes.json();
-        videoTitle = oembedData.title || videoTitle;
-        author = oembedData.author_name || author;
-      }
-
-      console.log(`Fetched video title via oEmbed: "${videoTitle}" by "${author}". Starting Google Search-grounded AI generator...`);
-
-      // 2. Call Gemini-3.5-Flash with search grounding enabled to search for the real transcript / content
-      const ai = await getLLMClientForRequest(req);
-      const prompt = `你是一个资深的雅思听力与口语辅导专家。
-我们正在为一部主题为 "${videoTitle}"（作者: ${author}，YouTube ID为 ${videoId}）的 YouTube 视频，定制设计一版【15句左右】的高质量雅思双语学术对照字幕，供学生进行精听默写和跟读练习。
-
-【至关重要】为了保证跟视频的实际内容高度吻合，你必须使用 Google Search 搜索工具，搜索该视频的真实台词、内容摘要、Transcript 或 spoken content：
-1. 优先采用搜索到的该视频实际的英文台词/文字稿进行时间轴和句子的切分，保证完全对应上视频实际内容！
-2. 将搜索到的真实文稿切分成【12到18个】发音连贯的单句，为每句生成对应的开始与结束时间轴（即使是合理估算的时间轴，但也必须保证每句文稿就是真实的视频说话内容！）：
-   - 第一句从 0.0s 开始。时间轴必须连续递增且不重合。
-   - 总时长约在 60 到 90 秒之间。
-3. 为每一句配备极其地道、学术词汇对齐的专业中文翻译。
-4. 只有当你通过 Google Search 完全查不到任何视频相关文稿或原声台词时，才允许基于视频主题 "${videoTitle}" 的背景自主创作一段极其真实贴近该主题的连贯独白。
-
-必须返回标准的 JSON 格式，不要包含任何 markdown 符号或外层包装。
-
-JSON 结构规范：
-{
-  "subtitles": [
-    {
-      "id": "yt-ai-1",
-      "start": 0.0,
-      "end": 5.4,
-      "text": "Hello and welcome to today's academic seminar where we will explore the critical aspects of this subject.",
-      "translation": "你好，欢迎来到今天的学术研讨会，在这里我们将探讨这一学科的关键方面。"
-    }
-  ]
-}
-`;
-
-      const fallbackResponse = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          tools: [{ googleSearch: {} }],
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              subtitles: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    id: { type: Type.STRING },
-                    start: { type: Type.NUMBER },
-                    end: { type: Type.NUMBER },
-                    text: { type: Type.STRING },
-                    translation: { type: Type.STRING }
-                  },
-                  required: ['id', 'start', 'end', 'text', 'translation']
-                }
-              }
-            },
-            required: ['subtitles']
-          }
-        }
-      });
-
-      const parsedFallback = safeJSONParse(fallbackResponse.text);
-      if (parsedFallback && Array.isArray(parsedFallback.subtitles) && parsedFallback.subtitles.length > 0) {
-        console.log(`Successfully generated AI Google Search grounded fallback subtitles for "${videoTitle}"`);
-        return res.json({
-          success: true,
-          subtitles: parsedFallback.subtitles,
-          source: `AI 搜索提炼真实字幕 (${videoTitle})`
-        });
-      } else {
-        throw new Error('Failed to parse AI-generated study subtitles.');
-      }
-
-    } catch (fallbackError: any) {
-      console.error('YouTube CC extraction and AI Fallback both failed:', fallbackError);
-      res.status(500).json({
-        error: `提取/抓取 YouTube CC 字幕失败: ${error.message}\n同时 AI 智能合成备用文稿失败: ${fallbackError.message}`
-      });
-    }
+    console.warn(`Direct YouTube CC extraction failed for ${videoId}: ${error.message}`);
+    res.status(422).json({
+      code: 'YOUTUBE_CAPTIONS_UNAVAILABLE',
+      error: '无法获取该视频的官方字幕。这种情况下不会生成或估算视频台词与时间轴。请粘贴真实文稿或字幕，再使用 AI 翻译和分段。',
+    });
   }
 });
 
