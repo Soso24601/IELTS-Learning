@@ -1494,6 +1494,7 @@ app.post('/api/youtube/subtitles', async (req, res) => {
 
   console.log(`Attempting to extract CC subtitles for YouTube Video ID: ${videoId}`);
 
+  let officialCaptionsFound = false;
   try {
     const captionBaseUrl = await fetchYoutubeCaptionUrl(videoId);
     if (!captionBaseUrl) {
@@ -1537,6 +1538,7 @@ app.post('/api/youtube/subtitles', async (req, res) => {
     if (subtitles.length === 0) {
       throw new Error('Could not parse any subtitles from the video caption track.');
     }
+    officialCaptionsFound = true;
 
     // Safety limit of 400 items to fit within standard model contexts comfortably
     const processedSubtitles = subtitles.slice(0, 400);
@@ -1606,6 +1608,12 @@ JSON Schema 结构：
 
   } catch (error: any) {
     console.warn(`Direct YouTube CC extraction failed for ${videoId}: ${error.message}`);
+    if (officialCaptionsFound) {
+      return res.status(502).json({
+        code: 'YOUTUBE_CAPTION_TRANSLATION_FAILED',
+        error: `已获取官方字幕，但 AI 翻译失败：${error.message || '请检查模型配置后重试。'}`,
+      });
+    }
     res.status(422).json({
       code: 'YOUTUBE_CAPTIONS_UNAVAILABLE',
       error: '无法获取该视频的官方字幕。这种情况下不会生成或估算视频台词与时间轴。请粘贴真实文稿或字幕，再使用 AI 翻译和分段。',
