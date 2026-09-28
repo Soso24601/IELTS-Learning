@@ -1,5 +1,7 @@
 # IELTS Vocabulary Builder · 雅思词汇记背伴侣
 
+在线访问：[雅思英语学习网页](http://ielts.grincaq.info/)
+
 多用户 · 云端存档 · 每账号自带大模型的雅思词汇学习应用。
 
 > 由 AI Studio 原型升级而来：新增 **注册/登录**、**数据按账号保存到服务端**、**每个用户自己填 API Key（BYOK，默认 DeepSeek）**、并附带 **Docker + Caddy 一键上云**。
