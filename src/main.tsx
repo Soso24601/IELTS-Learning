@@ -12,9 +12,9 @@ import React, { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import AuthPage from './components/AuthPage';
-import { apiMe, apiSnapshot, PublicUser } from './lib/authApi';
+import { apiMe, apiSnapshot, apiLogout, PublicUser } from './lib/authApi';
 import { clearLocalEntries, countLocalEntries, getLastAccount, setLastAccount, writeLocalEntries } from './lib/localData';
-import { disableSync, enableSync, pushLocalAllToServer, setHydrating } from './lib/sync';
+import { disableSync, enableSync, flushAll, getPendingEntries, pushLocalAllToServer, setHydrating } from './lib/sync';
 import './index.css';
 
 function Splash({ message }: { message: string }) {
@@ -35,6 +35,9 @@ function accountKey(u: PublicUser): string {
 function Root() {
   const [user, setUser] = useState<PublicUser | null | undefined>(undefined); // undefined = 启动中
   const [fatal, setFatal] = useState('');
+  const [syncError, setSyncError] = useState('');
+  const [pendingCount, setPendingCount] = useState(0);
+  const logoutRunning = useRef(false);
   const [retryTick, setRetryTick] = useState(0);
   const runningRef = useRef(false);
   const authLostRef = useRef(false);
@@ -60,7 +63,9 @@ function Root() {
   /** 登录成功 / me() 已有会话：水合本地 → 挂载 App → 启用同步 →（必要时）自动导入旧数据。 */
   const enter = async (nextUser: PublicUser) => {
     setFatal('');
+    setSyncError('');
     try {
+      await disableSync(false);
       const snap = await apiSnapshot();
       const serverHas = Object.keys(snap.data || {}).length > 0;
       const marker = getLastAccount();
@@ -69,6 +74,7 @@ function Root() {
       // 仅当「云端为空 + 本浏览器有数据 + 之前没用别的账号登录过此浏览器」才把本地当旧数据保留导入
       const importLegacy = !serverHas && localCount > 0 && (marker === null || marker === ak);
 
+      const pending = getPendingEntries(ak);
       setHydrating(true);
       if (serverHas) {
         clearLocalEntries();
@@ -77,6 +83,7 @@ function Root() {
         clearLocalEntries();
       }
       // importLegacy 为真：保留本地原样，稍后整体上推
+      writeLocalEntries(pending);
       setLastAccount(ak);
       setHydrating(false);
 
@@ -84,21 +91,33 @@ function Root() {
       setUser(nextUser);
       enableSync({
         onAuthLost: handleAuthLost,
-        onError: (m) => console.warn('[sync] 数据同步提示：', m),
+        onError: setSyncError,
+        onPendingChange: (count) => { setPendingCount(count); if (!count) setSyncError(''); },
       });
       if (importLegacy) {
-        await pushLocalAllToServer((m) => console.warn('[sync]', m));
+        await pushLocalAllToServer(setSyncError);
       }
     } catch (e: any) {
       if (!mountedRef.current) return;
+      setHydrating(false);
       setFatal(e?.message || '启动失败，请检查服务器是否可访问');
       setUser(null);
     }
   };
 
   const handleLogout = async () => {
-    await disableSync(true);
-    if (mountedRef.current) setUser(null);
+    if (logoutRunning.current) return;
+    logoutRunning.current = true;
+    try {
+      await disableSync(true);
+      await apiLogout();
+      if (mountedRef.current) setUser(null);
+    } catch {
+      setSyncError('退出账号失败，请检查网络后重试。');
+      if (user) enableSync({ onAuthLost: handleAuthLost, onError: setSyncError, onPendingChange: setPendingCount });
+    } finally {
+      logoutRunning.current = false;
+    }
   };
 
   const bootstrap = async () => {
@@ -155,11 +174,19 @@ function Root() {
   }
 
   return (
-    <App
-      user={user}
-      onLogout={() => void handleLogout()}
-      onUserChanged={(u) => setUser(u)}
-    />
+    <>
+      {(syncError || pendingCount > 0) && (
+        <div role="status" className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-900">
+          {syncError || `有 ${pendingCount} 项更改正在等待同步，请暂时保留本机数据。`}
+          <button className="ml-3 underline" onClick={() => { void flushAll(); }}>重试同步</button>
+        </div>
+      )}
+      <App
+        user={user}
+        onLogout={() => void handleLogout()}
+        onUserChanged={(u) => setUser(u)}
+      />
+    </>
   );
 }
 

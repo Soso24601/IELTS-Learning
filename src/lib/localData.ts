@@ -32,7 +32,7 @@ export function clearLocalEntries(): void {
 /** 把一组 { key: rawValue } 写回本地（用于服务端快照回灌）。 */
 export function writeLocalEntries(map: Record<string, string>): void {
   for (const [k, v] of Object.entries(map)) {
-    if (k.startsWith(LS_PREFIX)) localStorage.setItem(k, v);
+    if (k.startsWith(LS_PREFIX) && k !== LAST_ACCOUNT_KEY) localStorage.setItem(k, v);
   }
 }
 

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { 
   Volume2, 
   RotateCcw, 
@@ -17,6 +17,8 @@ import {
   Star
 } from 'lucide-react';
 import { IELTSWord, WordProgress, WordCategory } from '../types';
+
+import { reviewQueue } from '../lib/study';
 
 interface FlashcardsProps {
   vocabulary: IELTSWord[];
@@ -37,30 +39,8 @@ export default function Flashcards({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [sessionReviewedCount, setSessionReviewedCount] = useState(0);
 
-  // 1. Calculate words due for review right now
-  const dueWords = useMemo(() => {
-    const now = new Date();
-    const progressList = Object.values(progress);
-    
-    // Words already in progress that are due
-    const dueInSystem = vocabulary.filter(w => {
-      const p = progress[w.id];
-      if (!p) return false; // Not started yet, handled separately below
-      if (p.box >= 5) return false; // Fully mastered, done!
-      return new Date(p.nextReviewDate) <= now;
-    });
-
-    // If there are words already in learning but none are strictly due,
-    // let's blend in "new words" (not started yet) so the user always has something to study!
-    const unstarted = vocabulary.filter(w => !progress[w.id]);
-
-    // Return due words, or if none, suggest studying unstarted words
-    if (dueInSystem.length > 0) {
-      return dueInSystem;
-    } else {
-      return unstarted;
-    }
-  }, [vocabulary, progress]);
+  // Freeze this round so progress updates cannot shrink the queue and skip cards.
+  const [dueWords, setDueWords] = useState(() => reviewQueue(vocabulary, progress));
 
   const currentWord = dueWords[currentIndex] || null;
 
@@ -95,6 +75,7 @@ export default function Flashcards({
 
   // Restart learning session
   const handleRestart = () => {
+    setDueWords(reviewQueue(vocabulary, progress));
     setCurrentIndex(0);
     setIsFlipped(false);
     setSessionReviewedCount(0);
@@ -122,7 +103,7 @@ export default function Flashcards({
           </div>
           <div className="flex items-center gap-1.5">
             <Flame className="h-4 w-4 text-amber-500" />
-            <span>今日已记: <b>{sessionReviewedCount}</b> 词</span>
+            <span>本轮已复习: <b>{sessionReviewedCount}</b> 词</span>
           </div>
         </div>
       )}
@@ -135,9 +116,9 @@ export default function Flashcards({
             <CheckCircle className="h-10 w-10" />
           </div>
           <div className="space-y-2">
-            <h3 className="font-serif font-bold text-2xl text-stone-900">恭喜！你完成了当前的学习轮次</h3>
+            <h3 className="font-serif font-bold text-2xl text-stone-900">当前学习轮次已结束</h3>
             <p className="text-stone-500 text-sm max-w-md mx-auto leading-relaxed">
-              所有待复习词汇或新词已安排完毕。莱特纳盒子会在未来特定间隔（如：12小时、1天、3天、7天）再次提醒你进行艾宾浩斯复习。
+              已复习的词汇会按间隔再次进入复习队列；跳过的词汇可在下一轮继续学习。
             </p>
           </div>
 
@@ -159,7 +140,7 @@ export default function Flashcards({
               onClick={handleRestart}
               className="flex-1 py-3 px-4 bg-stone-100 hover:bg-stone-200 rounded-xl text-xs font-medium text-stone-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <RotateCcw className="h-4 w-4" /> 重新复习本组
+              <RotateCcw className="h-4 w-4" /> 开始下一轮
             </button>
             <button
               id="btn-navigate-to-ai"

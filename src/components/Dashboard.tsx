@@ -27,6 +27,8 @@ import {
 } from 'recharts';
 import { IELTSWord, WordProgress, DailyStats } from '../types';
 
+import { localDateKey } from '../lib/study';
+
 interface DashboardProps {
   vocabulary: IELTSWord[];
   progress: Record<string, WordProgress>;
@@ -46,7 +48,7 @@ export default function Dashboard({
 }: DashboardProps) {
   // Compute progress numbers
   const totalWords = vocabulary.length;
-  const progressList = Object.values(progress);
+  const progressList = vocabulary.flatMap(word => progress[word.id] ? [progress[word.id]] : []);
   
   const starredCount = useMemo(() => {
     return progressList.filter(p => p.starred).length;
@@ -61,6 +63,7 @@ export default function Dashboard({
     let box5 = 0; // Box 5: mastered
 
     progressList.forEach(p => {
+      if (p.timesReviewed === 0) return;
       unlearned--;
       if (p.box === 1) box1++;
       else if (p.box === 2) box2++;
@@ -87,7 +90,7 @@ export default function Dashboard({
   }, [progressList, totalWords]);
 
   // Today's stats
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateKey();
   const todayStats = useMemo(() => {
     const found = stats.find(s => s.date === todayStr);
     return found || { wordsReviewed: 0, wordsLearned: 0, minutesSpent: 0, correctAnswers: 0, totalAnswers: 0 };
@@ -113,7 +116,7 @@ export default function Dashboard({
     for (let i = 6; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = localDateKey(d);
       const match = stats.find(s => s.date === dateStr);
       
       const dayName = d.toLocaleDateString('zh-CN', { weekday: 'short' });
@@ -131,7 +134,7 @@ export default function Dashboard({
   const wordsDueCount = useMemo(() => {
     const now = new Date();
     return progressList.filter(p => {
-      return p.box < 5 && new Date(p.nextReviewDate) <= now;
+      return p.timesReviewed > 0 && new Date(p.nextReviewDate) <= now;
     }).length;
   }, [progressList]);
 
@@ -150,7 +153,7 @@ export default function Dashboard({
       defaultStats[cat].total++;
       
       const p = progress[w.id];
-      if (p) {
+      if (p && p.timesReviewed > 0) {
         if (p.box === 5) {
           defaultStats[cat].mastered++;
         } else {

@@ -193,7 +193,7 @@ export default function AIAssistant({
     
     setLoading(true);
     setError('');
-    setLoadingMessage('雅思官方写作考官正在构思 Band 8.5+ 高分作文段落，请稍候...');
+    setLoadingMessage('AI 正在生成写作练习参考，请稍候...');
 
     try {
       const response = await fetch('/api/gemini/writing', {
@@ -546,7 +546,7 @@ export default function AIAssistant({
             <div className="space-y-1">
               <h4 className="font-serif font-semibold text-stone-900 text-sm">选择需要合成写作段落的雅思单词</h4>
               <p className="text-stone-500 text-xs leading-relaxed">
-                请勾选 1 至 4 个单词。AI 考官将以这些单词为核心，在同一篇雅思 Task 2 议论文中熔炼出一个高分论证段落（Band 8.5+）。
+                请勾选 1 至 4 个单词。AI 将以这些单词为核心，在同一篇雅思 Task 2 议论文中生成一个论证段落供学习参考。
               </p>
             </div>
 
@@ -598,7 +598,7 @@ export default function AIAssistant({
                 onClick={handleGenerateWriting}
                 className="py-2.5 px-6 bg-stone-900 hover:bg-stone-850 disabled:bg-stone-100 disabled:text-stone-400 text-white rounded-xl text-xs font-serif font-bold transition shadow-xs cursor-pointer inline-flex items-center gap-1.5"
               >
-                <FileText className="h-4 w-4" /> 熔炼 Band 8.5+ 作文段落
+                <FileText className="h-4 w-4" /> 生成写作参考段落
               </button>
             </div>
           </div>
@@ -706,7 +706,7 @@ export default function AIAssistant({
                 <div className="space-y-2 border-t border-stone-100 pt-4">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-mono text-emerald-600 uppercase tracking-widest block">
-                      🎤 Band 8.5+ 考官满分答卷范例
+                      🎤 AI 口语回答参考
                     </span>
                     <div className="flex items-center gap-2">
                       <button

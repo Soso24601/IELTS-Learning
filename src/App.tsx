@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { presetVocabulary } from './data/vocabulary';
 import { IELTSWord, WordProgress, DailyStats, AISessionHistory, WordCategory } from './types';
+import { activeElapsed, localDateKey } from './lib/study';
 import { PublicUser } from './lib/authApi';
 
 // Importing sub-components
@@ -134,7 +135,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
       }
     } else {
       // Seed first day stat
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = localDateKey();
       const initialStats: DailyStats[] = [{
         date: todayStr,
         wordsReviewed: 0,
@@ -166,9 +167,26 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
 
   // 2. Active duration tracking (increases study time stats by 1 every minute of active engagement)
   useEffect(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    
+    let previous = Date.now();
+    let lastInteraction = previous;
+    let elapsed = 0;
+    let day = localDateKey();
+    const interact = () => { lastInteraction = Date.now(); };
+    const visibilityChanged = () => {
+      previous = Date.now();
+      if (document.visibilityState === 'visible') interact();
+    };
+    const events = ['pointerdown', 'keydown', 'scroll', 'touchstart'] as const;
+    events.forEach(event => window.addEventListener(event, interact, { passive: true }));
+    document.addEventListener('visibilitychange', visibilityChanged);
     const interval = setInterval(() => {
+      const now = Date.now();
+      const todayStr = localDateKey();
+      if (todayStr !== day) { elapsed = 0; day = todayStr; }
+      elapsed += activeElapsed(previous, now, lastInteraction, document.visibilityState === 'visible');
+      previous = now;
+      if (elapsed < 60000) return;
+      elapsed -= 60000;
       setStats(prevStats => {
         const foundIndex = prevStats.findIndex(s => s.date === todayStr);
         let updated = [...prevStats];
@@ -191,9 +209,13 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
         localStorage.setItem('ielts_vocab_stats', JSON.stringify(updated));
         return updated;
       });
-    }, 60000); // 1 minute
+    }, 5000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      events.forEach(event => window.removeEventListener(event, interact));
+      document.removeEventListener('visibilitychange', visibilityChanged);
+    };
   }, []);
 
   // 3. Streak Calculator (Recalculate streak whenever stats update)
@@ -212,10 +234,10 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
       return;
     }
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = localDateKey();
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    const yesterdayStr = localDateKey(yesterday);
 
     // If the user hasn't studied today or yesterday, streak breaks
     if (activeDates[0] !== todayStr && activeDates[0] !== yesterdayStr) {
@@ -356,106 +378,105 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
   // Leitner Spaced Repetition Core Algorithm
   const handleRegisterReview = (wordId: string, result: 'easy' | 'good' | 'hard' | 'forgot') => {
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+    const todayStr = localDateKey(now);
 
-    setProgress(prev => {
-      const current = prev[wordId] || {
-        wordId,
-        box: 1,
-        nextReviewDate: now.toISOString(),
-        status: 'new',
-        starred: false,
-        timesReviewed: 0
-      };
+    const prev = progress;
+    const current = prev[wordId] || {
+      wordId,
+      box: 1,
+      nextReviewDate: now.toISOString(),
+      status: 'new',
+      starred: false,
+      timesReviewed: 0
+    };
 
-      let newBox = current.box;
-      let newStatus: WordProgress['status'] = 'learning';
+    let newBox = current.box;
+    let newStatus: WordProgress['status'] = 'learning';
 
-      // Leitner Scheduling Intervals based on Box levels
-      // Box 1 -> Review in 4 hours
-      // Box 2 -> Review in 12 hours
-      // Box 3 -> Review in 1 day
-      // Box 4 -> Review in 3 days
-      // Box 5 -> Review in 7 days (fully mastered)
-      let nextReviewOffsetHours = 4;
+    // Leitner Scheduling Intervals based on Box levels
+    // Box 1 -> Review in 4 hours
+    // Box 2 -> Review in 12 hours
+    // Box 3 -> Review in 1 day
+    // Box 4 -> Review in 3 days
+    // Box 5 -> Review in 7 days (fully mastered)
+    let nextReviewOffsetHours = 4;
 
-      if (result === 'forgot') {
-        newBox = 1;
-        newStatus = 'learning';
-        nextReviewOffsetHours = 4;
-      } else if (result === 'hard') {
-        newBox = Math.max(1, current.box - 1);
-        newStatus = 'learning';
-        nextReviewOffsetHours = 8;
-      } else if (result === 'good') {
-        newBox = Math.min(5, current.box + 1);
-        newStatus = newBox >= 5 ? 'mastered' : newBox >= 3 ? 'familiar' : 'learning';
-        
-        // Define intervals based on box level
-        if (newBox === 2) nextReviewOffsetHours = 12;
-        else if (newBox === 3) nextReviewOffsetHours = 24; // 1 day
-        else if (newBox === 4) nextReviewOffsetHours = 72; // 3 days
-        else if (newBox === 5) nextReviewOffsetHours = 168; // 7 days (Mastered)
-      } else if (result === 'easy') {
-        newBox = 5; // skip straight to mastered
-        newStatus = 'mastered';
-        nextReviewOffsetHours = 168; // 7 days
+    if (result === 'forgot') {
+      newBox = 1;
+      newStatus = 'learning';
+      nextReviewOffsetHours = 4;
+    } else if (result === 'hard') {
+      newBox = Math.max(1, current.box - 1);
+      newStatus = 'learning';
+      nextReviewOffsetHours = 8;
+    } else if (result === 'good') {
+      newBox = Math.min(5, current.box + 1);
+      newStatus = newBox >= 5 ? 'mastered' : newBox >= 3 ? 'familiar' : 'learning';
+
+      // Define intervals based on box level
+      if (newBox === 2) nextReviewOffsetHours = 12;
+      else if (newBox === 3) nextReviewOffsetHours = 24; // 1 day
+      else if (newBox === 4) nextReviewOffsetHours = 72; // 3 days
+      else if (newBox === 5) nextReviewOffsetHours = 168; // 7 days (Mastered)
+    } else if (result === 'easy') {
+      newBox = 5; // skip straight to mastered
+      newStatus = 'mastered';
+      nextReviewOffsetHours = 168; // 7 days
+    }
+
+    // Calculate exact next review timestamp
+    const nextReviewDateObj = new Date();
+    nextReviewDateObj.setHours(nextReviewDateObj.getHours() + nextReviewOffsetHours);
+
+    const isFirstTimeLearned = current.timesReviewed === 0;
+
+    const updatedProgress: WordProgress = {
+      ...current,
+      box: newBox,
+      status: newStatus,
+      lastReviewed: now.toISOString(),
+      nextReviewDate: nextReviewDateObj.toISOString(),
+      timesReviewed: current.timesReviewed + 1
+    };
+
+    const updatedProgressMap = {
+      ...prev,
+      [wordId]: updatedProgress
+    };
+
+    setProgress(updatedProgressMap);
+    localStorage.setItem('ielts_vocab_progress', JSON.stringify(updatedProgressMap));
+
+    // Update statistical dashboard counters
+    setStats(prevStats => {
+      const foundIndex = prevStats.findIndex(s => s.date === todayStr);
+      let updatedStats = [...prevStats];
+
+      if (foundIndex >= 0) {
+        updatedStats[foundIndex] = {
+          ...updatedStats[foundIndex],
+          wordsReviewed: updatedStats[foundIndex].wordsReviewed + 1,
+          wordsLearned: updatedStats[foundIndex].wordsLearned + (isFirstTimeLearned ? 1 : 0)
+        };
+      } else {
+        updatedStats.push({
+          date: todayStr,
+          wordsReviewed: 1,
+          wordsLearned: isFirstTimeLearned ? 1 : 0,
+          minutesSpent: 0,
+          correctAnswers: 0,
+          totalAnswers: 0
+        });
       }
-
-      // Calculate exact next review timestamp
-      const nextReviewDateObj = new Date();
-      nextReviewDateObj.setHours(nextReviewDateObj.getHours() + nextReviewOffsetHours);
-
-      const isFirstTimeLearned = !prev[wordId];
-
-      const updatedProgress: WordProgress = {
-        ...current,
-        box: newBox,
-        status: newStatus,
-        lastReviewed: now.toISOString(),
-        nextReviewDate: nextReviewDateObj.toISOString(),
-        timesReviewed: current.timesReviewed + 1
-      };
-
-      const updatedProgressMap = {
-        ...prev,
-        [wordId]: updatedProgress
-      };
-
-      localStorage.setItem('ielts_vocab_progress', JSON.stringify(updatedProgressMap));
-
-      // Update statistical dashboard counters
-      setStats(prevStats => {
-        const foundIndex = prevStats.findIndex(s => s.date === todayStr);
-        let updatedStats = [...prevStats];
-
-        if (foundIndex >= 0) {
-          updatedStats[foundIndex] = {
-            ...updatedStats[foundIndex],
-            wordsReviewed: updatedStats[foundIndex].wordsReviewed + 1,
-            wordsLearned: updatedStats[foundIndex].wordsLearned + (isFirstTimeLearned ? 1 : 0)
-          };
-        } else {
-          updatedStats.push({
-            date: todayStr,
-            wordsReviewed: 1,
-            wordsLearned: isFirstTimeLearned ? 1 : 0,
-            minutesSpent: 0,
-            correctAnswers: 0,
-            totalAnswers: 0
-          });
-        }
-        localStorage.setItem('ielts_vocab_stats', JSON.stringify(updatedStats));
-        return updatedStats;
-      });
-
-      return updatedProgressMap;
+      localStorage.setItem('ielts_vocab_stats', JSON.stringify(updatedStats));
+      return updatedStats;
     });
+
   };
 
   // Record Quiz Score Outcomes
   const handleRecordQuizResult = (correctCount: number, totalCount: number) => {
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = localDateKey();
 
     setStats(prevStats => {
       const foundIndex = prevStats.findIndex(s => s.date === todayStr);

@@ -1,201 +1,173 @@
-/**
- * 同步引擎：登录后启用，拦截对 `ielts_*` localStorage 键的写入，
- * 逐 key debounce 后上传到服务端（/api/data/key）。登录时由门卫回灌快照。
- *
- * 数据流：组件照旧写 localStorage（事实源不变）→ 本模块异步同步到账号云端。
- * 因此 6 大学习模块的数据读写代码无需改动。
- */
-
+/** Account-scoped durable outbox. Failed writes survive reloads and account changes. */
 import { apiUploadKey } from './authApi';
-import { LS_PREFIX, listLocalEntries } from './localData';
+import { LS_PREFIX, LAST_ACCOUNT_KEY, getLastAccount, listLocalEntries } from './localData';
 
 const DEBOUNCE_MS = 1200;
 const MAX_ATTEMPTS = 4;
-
 export interface SyncHandlers {
-  /** 收到 401（会话失效）时回调，通常由根组件切回登录页。 */
   onAuthLost: () => void;
-  /** 非致命错误（如超出配额）回调，用于提示用户。 */
   onError?: (message: string) => void;
+  onPendingChange?: (count: number) => void;
 }
-
-let active = false;
+interface Session {
+  account: string;
+  handlers: SyncHandlers;
+  pending: Record<string, string>;
+  timers: Map<string, ReturnType<typeof setTimeout>>;
+  attempts: Map<string, number>;
+  flights: Map<string, Promise<void>>;
+  controllers: Set<AbortController>;
+}
+let session: Session | null = null;
 let hydrating = false;
 let patched = false;
-let handlers: SyncHandlers | null = null;
+const outboxKey = (account: string) => `ielts-sync-outbox:${account}`;
+const eligible = (key: string) => key.startsWith(LS_PREFIX) && key !== LAST_ACCOUNT_KEY && !key.endsWith('_pending_upload');
 
-const dirty = new Set<string>();
-const timers = new Map<string, ReturnType<typeof setTimeout>>();
-const attempts = new Map<string, number>();
+export function setHydrating(value: boolean): void { hydrating = value; }
 
-export function setHydrating(v: boolean): void {
-  hydrating = v;
+/** Overlay only this account's unsent changes before cloud hydration. */
+export function getPendingEntries(account: string): Record<string, string> {
+  const raw = localStorage.getItem(outboxKey(account));
+  if (!raw) return {};
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('本地待同步数据格式异常，请先保留浏览器数据');
+  return Object.fromEntries(Object.entries(parsed).filter(([key, value]) => eligible(key) && typeof value === 'string')) as Record<string, string>;
 }
 
-function isEligibleKey(key: string): boolean {
-  return key.startsWith(LS_PREFIX) && !key.endsWith('_pending_upload');
-}
-
-async function uploadKey(key: string, value: string): Promise<boolean> {
+function persist(s: Session): void {
   try {
-    await apiUploadKey(key, value);
-    return true;
-  } catch (e: any) {
-    if (e?.status === 401) {
-      handlers?.onAuthLost();
-      return false;
-    }
-    if (e?.status === 413) {
-      handlers?.onError?.(e.message || '数据超过账号存储上限');
-      dirty.delete(key); // 重试无意义
-      return false;
-    }
-    throw e;
+    if (Object.keys(s.pending).length) localStorage.setItem(outboxKey(s.account), JSON.stringify(s.pending));
+    else localStorage.removeItem(outboxKey(s.account));
+  } catch {
+    s.handlers.onError?.('浏览器存储空间不足，待同步内容暂时无法备份；请保持页面开启并导出备份。');
   }
+  if (session === s) s.handlers.onPendingChange?.(Object.keys(s.pending).length);
 }
 
-function scheduleFlush(key: string): void {
-  const existing = timers.get(key);
-  if (existing) clearTimeout(existing);
-  timers.set(
-    key,
-    setTimeout(() => {
-      void flushKey(key);
-    }, DEBOUNCE_MS),
-  );
+function schedule(s: Session, key: string, delay = DEBOUNCE_MS): void {
+  if (session !== s) return;
+  clearTimeout(s.timers.get(key));
+  s.timers.set(key, setTimeout(() => { void flushKey(s, key); }, delay));
 }
 
-function markDirty(key: string): void {
-  dirty.add(key);
-  attempts.delete(key);
-  scheduleFlush(key);
+function markDirty(s: Session, key: string, value: string): void {
+  s.pending[key] = value;
+  s.attempts.delete(key);
+  persist(s);
+  schedule(s, key);
 }
 
-async function flushKey(key: string): Promise<void> {
-  timers.delete(key);
-  if (!active) return;
-  const value = localStorage.getItem(key);
-  if (value === null) {
-    dirty.delete(key);
-    attempts.delete(key);
+async function flushKey(s: Session, key: string): Promise<void> {
+  clearTimeout(s.timers.get(key));
+  s.timers.delete(key);
+  if (session !== s || !(key in s.pending)) return;
+  // Serialize each key so an older request cannot overwrite a newer value.
+  const previous = s.flights.get(key);
+  if (previous) {
+    await previous;
+    if (session === s && key in s.pending) return flushKey(s, key);
     return;
   }
-  const round = attempts.get(key) || 0;
-  try {
-    const ok = await uploadKey(key, value);
-    if (ok) {
-      dirty.delete(key);
-      attempts.delete(key);
-    }
-  } catch {
-    attempts.set(key, round + 1);
-    if (round + 1 <= MAX_ATTEMPTS) {
-      const delay = Math.min(1500 * 2 ** round, 30000);
-      timers.set(
-        key,
-        setTimeout(() => void flushKey(key), delay),
-      );
-    } else {
-      dirty.delete(key);
-      attempts.delete(key);
-    }
-  }
-}
-
-/** 立刻把当前所有 pending 的 key 上传（登录/登出前调用）。 */
-export async function flushAll(): Promise<void> {
-  const keys = [...dirty];
-  for (const key of keys) {
-    const t = timers.get(key);
-    if (t) clearTimeout(t);
-    timers.delete(key);
-    const value = localStorage.getItem(key);
-    if (value === null) {
-      dirty.delete(key);
-      attempts.delete(key);
-      continue;
-    }
+  const value = s.pending[key];
+  const controller = new AbortController();
+  s.controllers.add(controller);
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  const flight = (async () => {
     try {
-      const ok = await uploadKey(key, value);
-      if (ok) {
-        dirty.delete(key);
-        attempts.delete(key);
+      await apiUploadKey(key, value, controller.signal);
+      if (session !== s) return;
+      if (s.pending[key] === value) {
+        delete s.pending[key];
+        s.attempts.delete(key);
+        persist(s);
+      } else schedule(s, key);
+    } catch (error: any) {
+      if (session !== s) return;
+      if (error?.status === 401) {
+        s.handlers.onAuthLost();
+      } else if (error?.status === 413) {
+        s.handlers.onError?.('云端存储空间不足，内容仍保存在本机待同步队列；请导出备份或减少材料后重试。');
+      } else {
+        const attempt = (s.attempts.get(key) || 0) + 1;
+        s.attempts.set(key, attempt);
+        if (attempt <= MAX_ATTEMPTS) schedule(s, key, Math.min(1500 * 2 ** (attempt - 1), 30000));
+        else s.handlers.onError?.('同步失败，内容已保留在本机，联网后会重试，也可以手动重试。');
       }
-    } catch {
-      attempts.set(key, (attempts.get(key) || 0) + 1);
-      if ((attempts.get(key) || 0) <= MAX_ATTEMPTS) scheduleFlush(key);
+    } finally {
+      clearTimeout(timeout);
+      s.controllers.delete(controller);
     }
-  }
+  })();
+  s.flights.set(key, flight);
+  try { await flight; } finally { s.flights.delete(key); }
 }
 
-/** 页面关闭前的尽力兜底：把脏数据用 sendBeacon 一次性推到服务器。 */
+export async function flushAll(): Promise<void> {
+  const s = session;
+  if (!s) return;
+  await Promise.all(Object.keys(s.pending).map(key => flushKey(s, key)));
+}
+
 export function beaconDirty(): void {
-  if (!active || dirty.size === 0) return;
-  const data: Record<string, string> = {};
-  for (const key of dirty) {
-    const v = localStorage.getItem(key);
-    if (v !== null) data[key] = v;
-  }
-  if (Object.keys(data).length === 0) return;
+  const s = session;
+  if (!s || !Object.keys(s.pending).length) return;
+  // A beacon has no acknowledgement. Keep the durable outbox until a normal upload succeeds.
   try {
-    const blob = new Blob([JSON.stringify({ data })], { type: 'application/json' });
-    navigator.sendBeacon('/api/data/import', blob);
-  } catch {
-    /* ignore */
-  }
+    navigator.sendBeacon('/api/data/import', new Blob([JSON.stringify({ data: s.pending })], { type: 'application/json' }));
+  } catch { /* the outbox remains available on next login */ }
 }
-
 function onOnline(): void {
-  if (!active) return;
-  for (const key of dirty) scheduleFlush(key);
+  const s = session;
+  if (!s) return;
+  s.attempts.clear();
+  for (const key of Object.keys(s.pending)) schedule(s, key);
 }
-function onPageHide(): void {
-  beaconDirty();
-}
+function onPageHide(): void { beaconDirty(); }
 
-/** 登录完成后启用同步（幂等）。若已经启用则只刷新处理器。 */
-export function enableSync(h: SyncHandlers): void {
-  handlers = h;
+export function enableSync(handlers: SyncHandlers): void {
+  const account = getLastAccount();
+  if (!account) throw new Error('无法确认同步账号');
+  if (session?.account === account) {
+    session.handlers = handlers;
+    handlers.onPendingChange?.(Object.keys(session.pending).length);
+    return;
+  }
+  if (session) throw new Error('切换账号前必须停止旧账号同步');
+  const s: Session = { account, handlers, pending: getPendingEntries(account), timers: new Map(), attempts: new Map(), flights: new Map(), controllers: new Set() };
+  session = s;
   if (!patched) {
     const original = Storage.prototype.setItem;
-    Storage.prototype.setItem = function (this: Storage, key: string, value: string) {
+    Storage.prototype.setItem = function (key: string, value: string) {
       original.call(this, key, value);
-      if (active && !hydrating && isEligibleKey(key)) markDirty(key);
+      if (this === localStorage && session && !hydrating && eligible(key)) markDirty(session, key, value);
     };
     patched = true;
   }
-  if (!active) {
-    active = true;
-    window.addEventListener('online', onOnline);
-    window.addEventListener('pagehide', onPageHide);
-  }
+  window.addEventListener('online', onOnline);
+  window.addEventListener('pagehide', onPageHide);
+  handlers.onPendingChange?.(Object.keys(s.pending).length);
+  onOnline();
 }
 
-/** 登出 / 切号前调用。flush=true 时先尽力把 pending 数据上传；会话失效路径传 false。 */
 export async function disableSync(flush = true): Promise<void> {
-  if (active && flush) {
-    await flushAll();
-  }
-  active = false;
-  handlers = null;
+  const s = session;
+  if (!s) return;
+  if (flush) await flushAll();
+  if (session !== s) return;
+  session = null;
+  for (const timer of s.timers.values()) clearTimeout(timer);
+  for (const controller of s.controllers) controller.abort();
   window.removeEventListener('online', onOnline);
   window.removeEventListener('pagehide', onPageHide);
 }
 
-/** 把当前浏览器里所有 `ielts_*` 一键推到当前账号（旧数据自动导入用）。 */
-export async function pushLocalAllToServer(onError?: (msg: string) => void): Promise<boolean> {
-  const entries = listLocalEntries();
-  const keys = Object.keys(entries);
-  if (keys.length === 0) return true;
-  try {
-    await import('./authApi').then((m) => m.apiImport(entries));
-    return true;
-  } catch (e: any) {
-    if (e?.status === 401) {
-      handlers?.onAuthLost();
-    } else if (e?.status === 413) {
-      onError?.(e?.message || '数据超出账号存储上限，导入失败');
-    }
-    return false;
-  }
+export async function pushLocalAllToServer(onError?: (message: string) => void): Promise<boolean> {
+  const s = session;
+  if (!s) return false;
+  for (const [key, value] of Object.entries(listLocalEntries())) if (eligible(key)) markDirty(s, key, value);
+  await flushAll();
+  const ok = Object.keys(s.pending).length === 0;
+  if (!ok) onError?.('部分内容尚未同步，已保留本地副本。');
+  return ok;
 }

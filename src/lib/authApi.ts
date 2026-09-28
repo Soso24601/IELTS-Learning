@@ -58,8 +58,8 @@ export function apiLogout(): Promise<{ ok: boolean }> {
 export function apiSnapshot(): Promise<{ data: Record<string, string>; count: number }> {
   return req('/api/data/snapshot');
 }
-export function apiUploadKey(key: string, value: string): Promise<{ ok: boolean }> {
-  return req('/api/data/key', json({ key, value }));
+export function apiUploadKey(key: string, value: string, signal?: AbortSignal): Promise<{ ok: boolean }> {
+  return req('/api/data/key', { ...json({ key, value }), signal });
 }
 export function apiImport(data: Record<string, string>): Promise<{ ok: boolean; imported: number }> {
   return req('/api/data/import', json({ data }));
