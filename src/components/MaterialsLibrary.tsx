@@ -1615,6 +1615,48 @@ export default function MaterialsLibrary({
     }
   };
 
+  const handleTranscribeYouTubeLocally = async () => {
+    if (!activeMaterial || isTranscribingMedia) return;
+    const materialId = activeMaterial.id;
+    let videoId = '';
+    try {
+      const url = new URL(activeMaterial.url || '');
+      videoId = url.hostname === 'youtu.be' ? url.pathname.slice(1) : url.searchParams.get('v') || url.pathname.match(/^\/(?:embed|shorts|live)\/([^/]+)/)?.[1] || '';
+      if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('视频链接无效。');
+    } catch {
+      alert('请先为这条材料填写有效的 YouTube 视频链接。');
+      return;
+    }
+    setIsTranscribingMedia(true);
+    setTranscribingMediaMessage('正在从本机获取音轨…');
+    setIsSubtitleEditorOpen(true);
+    try {
+      const response = await fetch('http://127.0.0.1:18765/audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoId }),
+      });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || '本机音轨助手无法获取此视频。');
+      }
+      const size = Number(response.headers.get('Content-Length') || 0);
+      if (size > 200 * 1024 * 1024) throw new Error('音轨超过 200 MB。');
+      const mimeType = (response.headers.get('Content-Type') || '').split(';')[0];
+      const extension = mimeType === 'audio/mp4' ? 'm4a' : mimeType === 'audio/mpeg' ? 'mp3' : mimeType === 'audio/ogg' ? 'ogg' : 'webm';
+      const blob = await response.blob();
+      if (!blob.size) throw new Error('本机助手返回了空音轨。');
+      await handleTranscribeMediaFile(new File([blob], `youtube-audio.${extension}`, { type: mimeType }), materialId);
+    } catch (error: any) {
+      const reason = error instanceof TypeError
+        ? '请先按说明启动本机音轨助手，并允许浏览器访问本机服务，然后刷新页面重试。'
+        : error.message || '请检查本机音轨助手是否仍在运行。';
+      alert(`本机快速提取失败：${reason}`);
+    } finally {
+      setIsTranscribingMedia(false);
+    }
+  };
+
   const handleTranscribeMediaFile = async (file: File, materialId = activeMaterial?.id, startOffset = 0) => {
     if (!materialId) return;
     const extension = file.name.split('.').pop()?.toLowerCase() || '';
@@ -3444,6 +3486,17 @@ export default function MaterialsLibrary({
 
                           {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
                             <div className="space-y-1.5">
+                              <button type="button" onClick={() => void handleTranscribeYouTubeLocally()}
+                                disabled={isTranscribingMedia || isExtractingCC}
+                                className="w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-950 hover:bg-emerald-100 disabled:opacity-60">
+                                {isTranscribingMedia ? transcribingMediaMessage : '本机快速提取音轨并识别（实验）'}
+                              </button>
+                              <p className="text-[11px] text-stone-500">需先在电脑上启动本机音轨助手。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装和测试说明</a></p>
+                            </div>
+                          )}
+
+                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
+                            <div className="space-y-1.5">
                               <button type="button" onClick={() => void startTabAudioRecording()}
                                 disabled={isRecordingTabAudio || isTranscribingMedia}
                                 className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-950 hover:bg-amber-100 disabled:opacity-60">
@@ -4976,6 +5029,12 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                         <p className="text-[11px] text-stone-500">
                           无需官方字幕。获取音轨后由百炼识别并导入本视频的文字稿，按百炼用量计费。请保持页面打开；视频最长 3 小时、音轨最大 200 MB。
                         </p>
+                        <button type="button" onClick={() => void handleTranscribeYouTubeLocally()}
+                          disabled={isTranscribingMedia || isExtractingCC}
+                          className="w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-950 hover:bg-emerald-100 disabled:opacity-60">
+                          {isTranscribingMedia ? transcribingMediaMessage : '本机快速提取音轨并识别（实验）'}
+                        </button>
+                        <p className="text-[11px] text-stone-500">需先启动本机音轨助手；获取整条视频音轨后交给百炼识别，无需实时播放。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装和测试说明</a></p>
                         <button type="button" onClick={() => void startTabAudioRecording()}
                           disabled={isRecordingTabAudio || isTranscribingMedia}
                           className="w-full rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-xs font-bold text-amber-950 hover:bg-amber-50 disabled:opacity-60">

@@ -1,4 +1,7 @@
 node_modules/
+.local-youtube-tools/
+__pycache__/
+*.pyc
 build/
 dist/
 coverage/
