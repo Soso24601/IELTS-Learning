@@ -1544,6 +1544,74 @@ export default function MaterialsLibrary({
     }
   };
 
+  const receiveTranscription = async (jobId: string, materialId: string) => {
+      let result: any;
+      for (let attempt = 0; attempt < 360; attempt++) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+        const statusResponse = await fetch(`/api/asr/transcribe-media/${encodeURIComponent(jobId)}`);
+        const status = await statusResponse.json();
+        if (!statusResponse.ok) throw new Error(status.error || '读取转写进度失败');
+        if (status.message) setTranscribingMediaMessage(status.message);
+        if (status.status === 'failed') throw new Error(status.error || '百炼语音识别失败');
+        if (status.status === 'completed') {
+          result = status.result;
+          break;
+        }
+      }
+      if (!result) throw new Error('语音识别等待超时，请缩短视频片段后重试。');
+      if (!Array.isArray(result.subtitles) || result.subtitles.length === 0) {
+        throw new Error('没有识别到可导入的语音片段。');
+      }
+
+      const importedSubtitles = result.subtitles.map((subtitle: any, index: number) => ({
+        ...subtitle,
+        id: subtitle.id || `asr-${Date.now()}-${index}`,
+        start: Number.isFinite(Number(subtitle.start)) ? Number(subtitle.start) : 0,
+        end: Number.isFinite(Number(subtitle.end)) ? Number(subtitle.end) : Number(subtitle.start || 0) + 2,
+        text: String(subtitle.text || '').trim(),
+        translation: String(subtitle.translation || ''),
+      })).filter((subtitle: any) => subtitle.text);
+      setMaterials(previous => {
+        const updated = previous.map(material => material.id === materialId ? {
+          ...material,
+          content: result.transcript || importedSubtitles.map((subtitle: any) => subtitle.text).join(' '),
+          videoSubtitles: importedSubtitles,
+          sentences: importedSubtitles.map((subtitle: any) => subtitle.text),
+        } : material);
+        localStorage.setItem('ielts_material_files', JSON.stringify(updated));
+        return updated;
+      });
+      setSelectedMaterialId(materialId);
+      setIsSubtitleEditorOpen(true);
+      setEditorSubtitles(importedSubtitles);
+      setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
+      alert(`语音识别完成，已导入 ${importedSubtitles.length} 句字幕。${result.warning || '可以在下方校对并保存修改。'}`);
+  };
+
+  const handleTranscribeYouTube = async () => {
+    if (!activeMaterial || isTranscribingMedia) return;
+    const materialId = activeMaterial.id;
+    setIsTranscribingMedia(true);
+    setTranscribingMediaMessage('正在获取 YouTube 音轨…');
+    setCcVideoUrl(activeMaterial.url || '');
+    setIsSubtitleEditorOpen(true);
+    try {
+      const response = await fetch('/api/asr/transcribe-youtube', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: activeMaterial.url }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '无法启动视频识别');
+      if (!result.jobId) throw new Error('服务器未返回任务编号');
+      await receiveTranscription(result.jobId, materialId);
+    } catch (error: any) {
+      alert(error.message || 'YouTube 语音识别失败，请重试。');
+    } finally {
+      setIsTranscribingMedia(false);
+    }
+  };
+
   const handleTranscribeMediaFile = async (file: File) => {
     if (!activeMaterial) return;
     const extension = file.name.split('.').pop()?.toLowerCase() || '';
@@ -1583,45 +1651,7 @@ export default function MaterialsLibrary({
       const uploadResult = await response.json();
       if (!response.ok) throw new Error(uploadResult.error || '音视频转写失败');
       if (!uploadResult.jobId) throw new Error('服务器没有返回转写任务编号。');
-      let result: any;
-      for (let attempt = 0; attempt < 300; attempt++) {
-        await new Promise((resolve) => window.setTimeout(resolve, 2000));
-        const statusResponse = await fetch(`/api/asr/transcribe-media/${encodeURIComponent(uploadResult.jobId)}`);
-        const status = await statusResponse.json();
-        if (!statusResponse.ok) throw new Error(status.error || '读取转写进度失败');
-        if (status.message) setTranscribingMediaMessage(status.message);
-        if (status.status === 'failed') throw new Error(status.error || '百炼语音识别失败');
-        if (status.status === 'completed') {
-          result = status.result;
-          break;
-        }
-      }
-      if (!result) throw new Error('语音识别等待超时，请缩短视频片段后重试。');
-      if (!Array.isArray(result.subtitles) || result.subtitles.length === 0) {
-        throw new Error('没有识别到可导入的语音片段。');
-      }
-
-      const importedSubtitles = result.subtitles.map((subtitle: any, index: number) => ({
-        ...subtitle,
-        id: subtitle.id || `asr-${Date.now()}-${index}`,
-        start: Number.isFinite(Number(subtitle.start)) ? Number(subtitle.start) : 0,
-        end: Number.isFinite(Number(subtitle.end)) ? Number(subtitle.end) : Number(subtitle.start || 0) + 2,
-        text: String(subtitle.text || '').trim(),
-        translation: String(subtitle.translation || ''),
-      })).filter((subtitle: any) => subtitle.text);
-      const updatedMaterials = materials.map(material => material.id === activeMaterial.id
-        ? {
-            ...material,
-            content: result.transcript || importedSubtitles.map((subtitle: any) => subtitle.text).join(' '),
-            videoSubtitles: importedSubtitles,
-            sentences: importedSubtitles.map((subtitle: any) => subtitle.text),
-          }
-        : material);
-      setMaterials(updatedMaterials);
-      localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
-      setEditorSubtitles(importedSubtitles);
-      setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
-      alert(`语音识别完成，已导入 ${importedSubtitles.length} 句字幕。可以在下方校对并保存修改。`);
+      await receiveTranscription(uploadResult.jobId, activeMaterial.id);
     } catch (error: any) {
       console.error('Error transcribing media file:', error);
       alert(`音视频转写失败：${error.message || '请重试或检查百炼 API Key 配置。'}`);
@@ -3307,8 +3337,8 @@ export default function MaterialsLibrary({
                               </h3>
                               <p className="text-[11px] text-stone-500 leading-relaxed">
                                 下方会内嵌<b>该链接对应的原视频</b>，可直接播放。
-                                字幕需要由你提供：YouTube 可尝试「抓取官方字幕」；B站 / TED / 其它请自行获取字幕文本，
-                                在下方<b>粘贴字幕/文稿</b>后用「AI 分段 + 逐句中译」即可精听。系统不再凭空编造字幕。
+                                YouTube 有字幕时可尝试「抓取官方字幕」；没有字幕时，点击「识别 YouTube 视频语音（百炼）」。
+                                也可以上传对应音频，或<b>粘贴字幕/文稿</b>，结果会保存在这条视频材料中。
                               </p>
                             </div>
                           </div>
@@ -3332,6 +3362,14 @@ export default function MaterialsLibrary({
                               className="w-full py-3 px-4 bg-red-600 hover:bg-red-700 disabled:bg-stone-300 text-white rounded-xl text-sm font-bold transition cursor-pointer"
                             >
                               {isExtractingCC ? '正在抓取官方字幕…' : '抓取 YouTube 官方字幕'}
+                            </button>
+                          )}
+
+                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
+                            <button type="button" onClick={() => void handleTranscribeYouTube()}
+                              disabled={isTranscribingMedia || isExtractingCC}
+                              className="w-full py-3 px-4 bg-amber-400 hover:bg-amber-500 disabled:bg-stone-300 text-stone-900 rounded-xl text-sm font-bold transition">
+                              {isTranscribingMedia ? transcribingMediaMessage : '识别 YouTube 视频语音（百炼）'}
                             </button>
                           )}
 
@@ -4804,7 +4842,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                 <div>
                   <h3 className="font-serif font-bold text-base leading-tight">📥 智能双语字幕导入与 AI 自动断句</h3>
                   <p className="text-[10px] text-stone-400 font-sans mt-0.5">
-                    在这里粘贴您准备好的文稿，AI 将全自动断句、翻译并对齐时间，最后逐句呈现双语对照！
+                    识别视频语音、上传对应音频或粘贴文字稿，字幕会保存在当前视频材料中。
                   </p>
                 </div>
               </div>
@@ -4848,6 +4886,19 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                       </button>
                     )}
 
+                    {/(youtube\.com|youtu\.be)/i.test(activeMaterial?.url || '') && (
+                      <div className="space-y-2">
+                        <button type="button" onClick={() => void handleTranscribeYouTube()}
+                          disabled={isTranscribingMedia || isExtractingCC}
+                          className="w-full rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-bold text-stone-900 hover:bg-amber-500 disabled:opacity-60">
+                          {isTranscribingMedia ? transcribingMediaMessage : '识别 YouTube 视频语音（百炼）'}
+                        </button>
+                        <p className="text-[11px] text-stone-500">
+                          无需官方字幕。获取音轨后由百炼识别并导入本视频的文字稿，按百炼用量计费。请保持页面打开；视频最长 3 小时、音轨最大 200 MB。YouTube 限制访问时，可在下方上传对应音频，原视频链接会保留。
+                        </p>
+                      </div>
+                    )}
+
                     <input
                       ref={mediaFileInputRef}
                       type="file"
@@ -4864,7 +4915,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                       disabled={isTranscribingMedia || isExtractingCC}
                       className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-950 transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
                     >
-                      {isTranscribingMedia ? transcribingMediaMessage : '🎙️ 上传本地音频/视频并转写'}
+                      {isTranscribingMedia ? transcribingMediaMessage : '上传对应音频/视频，生成本材料字幕'}
                     </button>
                     <p className="text-[10px] text-stone-500">
                       适用于没有字幕的内容。选择本地 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM 文件，单个文件最大 200 MB；需先在「账号与设置 → 语音识别」配置百炼 API Key。

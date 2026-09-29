@@ -10,6 +10,10 @@ RUN npm run build   # 产出 dist/（前端静态资源）与 dist/server.cjs
 FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache python3 py3-pip ca-certificates \
+    && python3 -m venv /opt/youtube-tools \
+    && /opt/youtube-tools/bin/pip install --no-cache-dir 'yt-dlp==2026.8.19' 'yt-dlp-ejs==0.8.0'
+ENV YT_DLP_PATH=/opt/youtube-tools/bin/yt-dlp
 COPY package.json package-lock.json ./
 # 保留生产依赖（express / vite / pdf-parse / mammoth / xlsx / @google/genai 等）
 RUN npm ci --omit=dev
