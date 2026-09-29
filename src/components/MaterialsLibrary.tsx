@@ -30,6 +30,7 @@ import {
   BookOpen,
   FileSpreadsheet,
   UploadCloud,
+  Clipboard,
   Eye,
   EyeOff,
   Search
@@ -1630,6 +1631,41 @@ export default function MaterialsLibrary({
     setRawSubtitlePaste(value);
     const parsed = parseRawTextToSubtitles(value);
     setEditorSubtitles(parsed);
+  };
+
+  const normalizeTranscriptForImport = (value: string) => {
+    const lines = value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const normalized: string[] = [];
+    let pendingTimestamp: number | null = null;
+    const timestampPattern = /^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.\d+)?\s*(.*)$/;
+
+    for (const line of lines) {
+      const match = line.match(timestampPattern);
+      if (!match) {
+        normalized.push(pendingTimestamp === null ? line : `[${pendingTimestamp}] ${line}`);
+        pendingTimestamp = null;
+        continue;
+      }
+      const seconds = Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+      const text = match[4].trim();
+      if (text) normalized.push(`[${seconds}] ${text}`);
+      else pendingTimestamp = seconds;
+    }
+    if (pendingTimestamp !== null) normalized.push(`[${pendingTimestamp}]`);
+    return normalized.join('\n');
+  };
+
+  const pasteTranscriptFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard?.readText) throw new Error('当前浏览器不支持读取剪贴板');
+      const clipboardText = await navigator.clipboard.readText();
+      if (!clipboardText.trim()) throw new Error('剪贴板是空的。请先在 YouTube 文字稿面板中复制文字稿。');
+      const normalized = normalizeTranscriptForImport(clipboardText);
+      setRawSubtitlePaste(normalized);
+      setEditorSubtitles(parseRawTextToSubtitles(normalized));
+    } catch (error: any) {
+      alert(error?.message || '无法读取剪贴板。请允许浏览器访问剪贴板，或直接粘贴文字稿。');
+    }
   };
 
   // Shift all timestamps globally forward/backward
@@ -3287,11 +3323,25 @@ export default function MaterialsLibrary({
                           )}
 
                           <div className="flex-1 flex flex-col space-y-3">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white px-3.5 py-3">
+                              <div>
+                                <h4 className="text-xs font-bold text-stone-900">📝 视频文字稿面板</h4>
+                                <p className="mt-1 text-[10px] leading-relaxed text-stone-500">YouTube 播放器里的文字稿不能被网页自动读取。请在 YouTube 点“显示文字稿”并复制，再粘贴到这里。</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void pasteTranscriptFromClipboard()}
+                                className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-[11px] font-bold text-stone-700 transition hover:border-amber-400 hover:bg-amber-50"
+                              >
+                                <Clipboard className="h-3.5 w-3.5" />粘贴已复制的文字稿
+                              </button>
+                            </div>
                             <textarea
                               rows={16}
                               value={rawSubtitlePaste}
                               onChange={(e) => setRawSubtitlePaste(e.target.value)}
-                              placeholder="在此直接贴入整段连续的英文段落、或者带时间轴的字幕文本。
+                              placeholder="复制 YouTube 文字稿后，点上方“粘贴已复制的文字稿”，或直接在这里粘贴。
+支持整段英文和带时间轴的文字稿，例如：
 例如：
 Welcome to the library! Today, we are focusing on low-lying coastal urban areas and mitigating climate dangers..."
                               className="w-full flex-1 p-3 font-mono text-xs bg-stone-50/50 border border-stone-250 rounded-xl focus:border-stone-900 focus:outline-hidden min-h-[320px] resize-y"
@@ -4680,9 +4730,19 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
 
               <div className="space-y-4">
                 <div className="bg-stone-50 border rounded-xl p-4 space-y-2.5">
-                    <h4 className="text-xs font-bold text-stone-900">📥 在下方粘贴视频英文文稿、听力原文或带时间轴的字幕内容:</h4>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <h4 className="text-xs font-bold text-stone-900">📥 粘贴视频英文文稿、文字稿或带时间轴的字幕:</h4>
+                      <button
+                        type="button"
+                        onClick={() => void pasteTranscriptFromClipboard()}
+                        className="inline-flex items-center justify-center gap-1.5 self-start rounded-lg border border-stone-300 bg-white px-3 py-2 text-[10px] font-bold text-stone-700 transition hover:border-amber-400 hover:bg-amber-50"
+                      >
+                        <Clipboard className="h-3.5 w-3.5" />粘贴剪贴板文字稿
+                      </button>
+                    </div>
                     <p className="text-[11px] text-stone-500 leading-relaxed">
-                      1. <b>🪄 AI 自动断句与翻译 (极力推荐):</b> 您可以粘贴任何一长段、杂乱或未分句的英文文稿，点击下方按钮。AI 顶级大模型将自动为您智能切分为<b>自然发音的逐句中英双语字幕</b>并全自动对齐时间轴！<br/>
+                      先在 YouTube 视频菜单中打开“显示文字稿”，复制文字稿，再点右侧按钮放入输入框。浏览器不会允许网页直接读取播放器内部内容。<br/>
+                      1. <b>🪄 AI 自动断句与翻译 (极力推荐):</b> 您可以粘贴任何一长段、杂乱或未分句的英文文稿，点击下方按钮。AI 将按真实文稿切分为逐句中英字幕；没有时间戳时会估算时间，不能保证逐帧同步。<br/>
                       2. <b>传统文本直接导入:</b> 按回车换行拆分每一行字幕。如果以 <code className="font-mono bg-stone-100 px-1 py-0.5 text-red-600">[0.0-5.5] English | Chinese</code> 的标准格式贴入，系统将自动高精度解包该时间段。
                     </p>
 
