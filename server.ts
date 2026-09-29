@@ -1510,26 +1510,53 @@ async function fetchYoutubeCaptionUrl(videoId: string): Promise<string | null> {
     if (pageRes.ok) {
       const html = await pageRes.text();
       const apiKey = html.match(/"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"/)?.[1];
-      const contextMatch = html.match(/"INNERTUBE_CONTEXT"\s*:\s*({[\s\S]*?})\s*,\s*"INNERTUBE_CONTEXT_CLIENT_NAME"/);
-      let context: any = { client: { clientName: 'WEB', clientVersion: '2.20240919.00.00', hl: 'en', gl: 'US' } };
-      if (contextMatch) {
-        try { context = JSON.parse(contextMatch[1]); } catch { /* use safe WEB defaults */ }
+      const contextIndex = html.indexOf('"INNERTUBE_CONTEXT"');
+      const contextJson = contextIndex >= 0 ? extractBalancedJson(html, contextIndex) : null;
+      let pageContext: any = null;
+      if (contextJson) {
+        try { pageContext = JSON.parse(contextJson); } catch { /* use safe client defaults */ }
       }
       if (apiKey) {
-        const playerRes = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}`, {
-          method: 'POST',
-          signal: AbortSignal.timeout(12000),
-          headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0', 'Origin': 'https://www.youtube.com' },
-          body: JSON.stringify({ context, videoId, contentCheckOk: true, racyCheckOk: true }),
-        });
-        if (playerRes.ok) {
-          const playerResponse = await playerRes.json();
-          const track = selectYoutubeCaptionTrack(getYoutubeCaptionTracks(playerResponse));
-          if (track?.baseUrl) {
-            console.log(`[YouTube Captions Scraper] Found caption track via player endpoint (${track.languageCode || 'unknown'})`);
-            return track.baseUrl;
+        const clients = [
+          { name: 'WEB', headerName: '1', version: pageContext?.client?.clientVersion || '2.20240919.00.00' },
+          { name: 'ANDROID', headerName: '3', version: '19.44.38' },
+        ];
+        for (const client of clients) {
+          const context = pageContext || { client: {} };
+          context.client = {
+            ...context.client,
+            clientName: client.name,
+            clientVersion: client.version,
+            hl: context.client?.hl || 'en',
+            gl: context.client?.gl || 'US',
+          };
+          try {
+            const playerRes = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}`, {
+              method: 'POST',
+              signal: AbortSignal.timeout(12000),
+              headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0',
+                'Origin': 'https://www.youtube.com',
+                'X-YouTube-Client-Name': client.headerName,
+                'X-YouTube-Client-Version': client.version,
+              },
+              body: JSON.stringify({ context, videoId, contentCheckOk: true, racyCheckOk: true }),
+            });
+            if (!playerRes.ok) {
+              console.warn(`[YouTube Captions Scraper] ${client.name} player request returned HTTP ${playerRes.status}`);
+              continue;
+            }
+            const playerResponse = await playerRes.json();
+            const track = selectYoutubeCaptionTrack(getYoutubeCaptionTracks(playerResponse));
+            if (track?.baseUrl) {
+              console.log(`[YouTube Captions Scraper] Found caption track via ${client.name} player endpoint (${track.languageCode || 'unknown'})`);
+              return track.baseUrl;
+            }
+            console.warn(`[YouTube Captions Scraper] ${client.name} player endpoint returned no tracks; playability=${playerResponse?.playabilityStatus?.status || 'unknown'}`);
+          } catch (err: any) {
+            console.warn(`[YouTube Captions Scraper] ${client.name} player request failed:`, err?.message);
           }
-          console.warn(`[YouTube Captions Scraper] Player endpoint returned no tracks; playability=${playerResponse?.playabilityStatus?.status || 'unknown'}`);
         }
       }
     }
