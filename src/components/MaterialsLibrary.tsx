@@ -327,7 +327,16 @@ export default function MaterialsLibrary({
         videoId = baseUrl.split('embed/')[1]?.split(/[?#]/)[0] || '';
       }
       if (videoId) {
-        return `https://www.youtube.com/embed/${videoId}?start=${Math.floor(seekTime)}&autoplay=${autoplay ? 1 : 0}&enablejsapi=1`;
+        const params = new URLSearchParams({
+          start: String(Math.floor(seekTime)),
+          autoplay: autoplay ? '1' : '0',
+          enablejsapi: '1',
+          cc_load_policy: '0',
+          controls: '1',
+          modestbranding: '1',
+          rel: '0',
+        });
+        return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
       }
     }
     
@@ -1499,12 +1508,27 @@ export default function MaterialsLibrary({
 
       const result = await response.json();
       if (result.success && Array.isArray(result.subtitles)) {
-        setEditorSubtitles(result.success && Array.isArray(result.subtitles) ? result.subtitles : []);
-        setRawSubtitlePaste(result.subtitles ? result.subtitles.map((s: any) => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.text} | ${s.translation}`).join('\n') : '');
-        // Switch tab to visual so they can see and edit
-        setEditorTab('visual');
-        const message = result.note || `已抓取并翻译 ${result.subtitles.length} 条 YouTube 官方字幕。`;
-        alert(`${message}\n字幕已载入编辑区，请检查后点击保存。`);
+        const importedSubtitles = result.subtitles
+          .filter((s: any) => s && typeof s.text === 'string' && s.text.trim())
+          .map((s: any, index: number) => ({
+            ...s,
+            id: s.id || `yt-${Date.now()}-${index}`,
+            start: Number.isFinite(Number(s.start)) ? Number(s.start) : 0,
+            end: Number.isFinite(Number(s.end)) ? Number(s.end) : Number(s.start || 0) + 3,
+            translation: typeof s.translation === 'string' ? s.translation : '',
+          }));
+        if (importedSubtitles.length === 0) throw new Error('抓取结果中没有可导入的字幕');
+
+        if (!activeMaterial) throw new Error('当前视频材料已不存在，请重新打开后再试');
+        const updatedMaterials = materials.map(m => m.id === activeMaterial.id
+          ? { ...m, videoSubtitles: importedSubtitles, sentences: importedSubtitles.map((s: any) => s.text) }
+          : m);
+        setMaterials(updatedMaterials);
+        localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
+        setEditorSubtitles(importedSubtitles);
+        setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
+        const message = result.note || `已抓取 ${importedSubtitles.length} 条 YouTube 官方字幕。`;
+        alert(`${message}\n字幕已直接导入并保存到当前视频。`);
       } else {
         throw new Error('未返回有效的字幕数据');
       }
