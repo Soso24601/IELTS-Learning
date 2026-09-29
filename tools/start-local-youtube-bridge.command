@@ -1,5 +1,9 @@
 #!/bin/zsh
 set -e
+TRAPZERR() {
+  echo "本机音轨助手未能启动。请将上方错误发给我；按任意键关闭窗口。"
+  read -k 1
+}
 cd "$(dirname "$0")/.."
 for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
   if command -v "$candidate" >/dev/null && "$candidate" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then

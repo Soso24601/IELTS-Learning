@@ -1649,7 +1649,7 @@ export default function MaterialsLibrary({
       await handleTranscribeMediaFile(new File([blob], `youtube-audio.${extension}`, { type: mimeType }), materialId);
     } catch (error: any) {
       const reason = error instanceof TypeError
-        ? '请先按说明启动本机音轨助手，并允许浏览器访问本机服务，然后刷新页面重试。'
+        ? '网页无法连接本机音轨助手。请双击启动脚本，看到「已启动」后保持窗口打开；如果助手已启动，请允许 Chrome 对本站的「本地网络访问」。浏览器直接打开 http://127.0.0.1:18765/health，看到 ok:true 表示助手正在运行。'
         : error.message || '请检查本机音轨助手是否仍在运行。';
       alert(`本机快速提取失败：${reason}`);
     } finally {
@@ -3491,7 +3491,7 @@ export default function MaterialsLibrary({
                                 className="w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-950 hover:bg-emerald-100 disabled:opacity-60">
                                 {isTranscribingMedia ? transcribingMediaMessage : '本机快速提取音轨并识别（实验）'}
                               </button>
-                              <p className="text-[11px] text-stone-500">需先在电脑上启动本机音轨助手。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装和测试说明</a></p>
+                              <p className="text-[11px] text-stone-500">需先在电脑上启动本机音轨助手，并保持启动窗口打开。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装说明</a> · <a className="underline" href="http://127.0.0.1:18765/health" target="_blank" rel="noreferrer">检查助手是否运行</a></p>
                             </div>
                           )}
 
@@ -5034,7 +5034,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                           className="w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-950 hover:bg-emerald-100 disabled:opacity-60">
                           {isTranscribingMedia ? transcribingMediaMessage : '本机快速提取音轨并识别（实验）'}
                         </button>
-                        <p className="text-[11px] text-stone-500">需先启动本机音轨助手；获取整条视频音轨后交给百炼识别，无需实时播放。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装和测试说明</a></p>
+                        <p className="text-[11px] text-stone-500">需先启动本机音轨助手并保持启动窗口打开；获取整条视频音轨后交给百炼识别，无需实时播放。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装说明</a> · <a className="underline" href="http://127.0.0.1:18765/health" target="_blank" rel="noreferrer">检查助手是否运行</a></p>
                         <button type="button" onClick={() => void startTabAudioRecording()}
                           disabled={isRecordingTabAudio || isTranscribingMedia}
                           className="w-full rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-xs font-bold text-amber-950 hover:bg-amber-50 disabled:opacity-60">
