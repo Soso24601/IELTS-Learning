@@ -68,7 +68,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", ""))
+        if self._allowed():
+            self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
         self.send_header("Access-Control-Allow-Private-Network", "true")
         self.send_header("Vary", "Origin")
         self.end_headers()
@@ -94,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if not self._allowed() or self.path != "/health":
+        if self.path != "/health":
             self.send_error(403)
             return
         self._json(200, {"ok": True, "version": 1})

@@ -30,6 +30,18 @@ class BridgeTest(unittest.TestCase):
             return path
 
         try:
+            with urlopen(base + "/health", timeout=3) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn(b'"ok": true', response.read())
+
+            health_from_site = Request(base + "/health", headers={"Origin": "https://ielts.grincaq.info"})
+            with urlopen(health_from_site, timeout=3) as response:
+                self.assertEqual(response.headers["Access-Control-Allow-Origin"], "https://ielts.grincaq.info")
+
+            health_from_other_site = Request(base + "/health", headers={"Origin": "https://evil.example"})
+            with urlopen(health_from_other_site, timeout=3) as response:
+                self.assertIsNone(response.headers["Access-Control-Allow-Origin"])
+
             with patch.object(bridge, "download_audio", fake_download):
                 unauthorized = Request(base + "/audio", data=b'{"videoId":"h2ou2A_-8JU"}', headers={"Origin": "https://evil.example", "Content-Type": "application/json"})
                 with self.assertRaises(HTTPError) as error:

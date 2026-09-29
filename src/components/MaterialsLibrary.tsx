@@ -1630,12 +1630,15 @@ export default function MaterialsLibrary({
     setIsTranscribingMedia(true);
     setTranscribingMediaMessage('正在从本机获取音轨…');
     setIsSubtitleEditorOpen(true);
+    let localAudioStage: 'connect' | 'download' | 'transcribe' = 'connect';
     try {
       const response = await fetch('http://127.0.0.1:18765/audio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoId }),
       });
+      localAudioStage = 'download';
+      setTranscribingMediaMessage('正在下载视频音轨…');
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
         throw new Error(result.error || '本机音轨助手无法获取此视频。');
@@ -1646,10 +1649,15 @@ export default function MaterialsLibrary({
       const extension = mimeType === 'audio/mp4' ? 'm4a' : mimeType === 'audio/mpeg' ? 'mp3' : mimeType === 'audio/ogg' ? 'ogg' : 'webm';
       const blob = await response.blob();
       if (!blob.size) throw new Error('本机助手返回了空音轨。');
+      localAudioStage = 'transcribe';
       await handleTranscribeMediaFile(new File([blob], `youtube-audio.${extension}`, { type: mimeType }), materialId);
     } catch (error: any) {
       const reason = error instanceof TypeError
-        ? '网页无法连接本机音轨助手。请双击启动脚本，看到「已启动」后保持窗口打开；如果助手已启动，请允许 Chrome 对本站的「本地网络访问」。浏览器直接打开 http://127.0.0.1:18765/health，看到 ok:true 表示助手正在运行。'
+        ? localAudioStage === 'connect'
+          ? '网页无法连接本机音轨助手。请确认启动窗口保持打开，并允许 Chrome 对本站的「本地网络访问」；可打开 http://127.0.0.1:18765/health 检查助手。'
+          : localAudioStage === 'download'
+            ? '已连接本机助手，但音轨传输中断。请确认启动窗口仍在运行，并重试。'
+            : '音轨已取得，但上传识别服务时网络中断，请重试。'
         : error.message || '请检查本机音轨助手是否仍在运行。';
       alert(`本机快速提取失败：${reason}`);
     } finally {
