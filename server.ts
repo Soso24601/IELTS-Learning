@@ -1543,7 +1543,10 @@ app.post('/api/youtube/subtitles', async (req, res) => {
     // Safety limit of 400 items to fit within standard model contexts comfortably
     const processedSubtitles = subtitles.slice(0, 400);
 
-    // AI Translation of the extracted English sentences in a single clean JSON Schema pass
+    // Official captions are useful without AI; translation is an optional enhancement.
+    let translationNote = '';
+    const transMap = new Map();
+    try {
     const ai = await getLLMClientForRequest(req);
     const translationPrompt = `你是一个资深的雅思听力与口语培训专家。
 请将下面来自视频CC字幕的英文句子，翻译成非常雅思地道、优美且忠于语境的中文对照。
@@ -1588,22 +1591,29 @@ JSON Schema 结构：
     });
 
     const parsedData = safeJSONParse(translationResponse.text);
-    const transMap = new Map();
     if (parsedData && Array.isArray(parsedData.translations)) {
       parsedData.translations.forEach((t: any) => {
         transMap.set(t.id, t.translation);
       });
     }
+    } catch (translationError: any) {
+      if (translationError?.code === 'LLM_NOT_CONFIGURED' || translationError?.message === 'LLM_NOT_CONFIGURED') {
+        translationNote = '已抓取官方英文字幕。配置 AI 模型后可自动生成中文翻译。';
+      } else {
+        throw translationError;
+      }
+    }
 
     const finalSubtitles = processedSubtitles.map(s => ({
       ...s,
-      translation: transMap.get(s.id) || '（暂无中文翻译，可点击手动编辑）'
+      translation: transMap.get(s.id) || ''
     }));
 
     res.json({
       success: true,
       subtitles: finalSubtitles,
-      source: 'YouTube 官方CC字幕'
+      source: 'YouTube 官方CC字幕',
+      note: translationNote,
     });
 
   } catch (error: any) {

@@ -1479,7 +1479,8 @@ export default function MaterialsLibrary({
 
   // Extract YouTube CC subtitles and translate them using backend endpoint
   const handleExtractCCSubtitles = async () => {
-    if (!ccVideoUrl.trim()) {
+    const videoUrl = ccVideoUrl.trim() || activeMaterial?.url?.trim() || '';
+    if (!videoUrl) {
       alert('请先输入或提供有效的 YouTube 视频链接！');
       return;
     }
@@ -1488,7 +1489,7 @@ export default function MaterialsLibrary({
       const response = await fetch('/api/youtube/subtitles', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: ccVideoUrl })
+        body: JSON.stringify({ url: videoUrl })
       });
 
       if (!response.ok) {
@@ -1502,7 +1503,8 @@ export default function MaterialsLibrary({
         setRawSubtitlePaste(result.subtitles ? result.subtitles.map((s: any) => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.text} | ${s.translation}`).join('\n') : '');
         // Switch tab to visual so they can see and edit
         setEditorTab('visual');
-        alert(`成功从 YouTube 提取并 AI 翻译了 ${result.subtitles.length} 条双语字幕时间轴！\n您可以在下方“可视化编辑”中预览或微调，并点击最右下角保存生效。`);
+        const message = result.note || `已抓取并翻译 ${result.subtitles.length} 条 YouTube 官方字幕。`;
+        alert(`${message}\n字幕已载入编辑区，请检查后点击保存。`);
       } else {
         throw new Error('未返回有效的字幕数据');
       }
@@ -3165,6 +3167,21 @@ export default function MaterialsLibrary({
                             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
                               ✅ {crawlNotice}
                             </div>
+                          )}
+
+                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCcVideoUrl(activeMaterial.url || '');
+                                setIsSubtitleEditorOpen(true);
+                                void handleExtractCCSubtitles();
+                              }}
+                              disabled={isExtractingCC}
+                              className="w-full py-3 px-4 bg-red-600 hover:bg-red-700 disabled:bg-stone-300 text-white rounded-xl text-sm font-bold transition cursor-pointer"
+                            >
+                              {isExtractingCC ? '正在抓取官方字幕…' : '抓取 YouTube 官方字幕'}
+                            </button>
                           )}
 
                           {/* 无字幕时也内嵌原视频，让用户先看到真实视频 */}
