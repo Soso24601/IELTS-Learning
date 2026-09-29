@@ -20,7 +20,7 @@ import {
   Trash2, 
   ArrowLeft, 
   ChevronRight, 
-  File, 
+  File as FileIcon,
   Edit3, 
   CheckCircle, 
   XCircle, 
@@ -3351,7 +3351,7 @@ export default function MaterialsLibrary({
             /* Workspace Empty State */
             <div className="bg-white border border-stone-200/80 rounded-2xl p-12 text-center shadow-xs flex flex-col items-center justify-center min-h-[450px]">
               <div className="p-4 bg-stone-50 rounded-full border border-stone-100 text-stone-400 mb-4">
-                <File className="h-8 w-8 text-stone-400" />
+                <FileIcon className="h-8 w-8 text-stone-400" />
               </div>
               <h3 className="font-serif font-bold text-stone-950 text-base">
                 请先选择或创建一个学习材料
