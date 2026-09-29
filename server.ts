@@ -5,10 +5,16 @@
 
 import express from 'express';
 import path from 'path';
+import { createWriteStream } from 'node:fs';
+import { unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import { Type } from '@google/genai';
 import { installUserSystem } from './server/lib/routes';
-import { getLLMClientForRequest } from './server/lib/llm';
+import { getGeminiMediaClientForRequest, getLLMClientForRequest } from './server/lib/llm';
 import { assertSafeHttpUrl } from './server/lib/net';
 import { createServer as createViteServer } from 'vite';
 import { createRequire } from 'module';
@@ -916,6 +922,147 @@ app.post('/api/gemini/summarize-material', async (req, res) => {
 });
 
 // 6. Transcribe Audio (音频逐句转写，支持听力逐字听写)
+app.post('/api/gemini/transcribe-media', async (req, res) => {
+  const maxBytes = 200 * 1024 * 1024;
+  const mimeType = String(req.header('x-media-mime-type') || '').toLowerCase().split(';')[0].trim();
+  const allowedMimeTypes = new Set([
+    'audio/aac', 'audio/flac', 'audio/mp3', 'audio/mp4', 'audio/m4a', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm',
+    'video/3gpp', 'video/avi', 'video/mov', 'video/mp4', 'video/mpeg', 'video/mpg', 'video/webm', 'video/wmv', 'video/x-flv',
+  ]);
+  if (!allowedMimeTypes.has(mimeType)) {
+    return res.status(400).json({ error: '文件格式不支持。请选择 MP3、M4A、WAV、OGG、MP4、MOV、AVI 或 WebM。' });
+  }
+
+  const declaredSize = Number(req.header('content-length') || 0);
+  if (declaredSize > maxBytes) {
+    return res.status(413).json({ error: '文件超过 200 MB。请剪出需要精听的片段，或先导出压缩后的音频。' });
+  }
+
+  let ai: any;
+  let uploadedFile: any;
+  let temporaryPath = '';
+  try {
+    const client = await getGeminiMediaClientForRequest(req);
+    ai = client.ai;
+    const extensionByMime: Record<string, string> = {
+      'audio/aac': '.aac', 'audio/flac': '.flac', 'audio/mp3': '.mp3', 'audio/mp4': '.m4a', 'audio/m4a': '.m4a',
+      'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'audio/webm': '.webm',
+      'video/3gpp': '.3gp', 'video/avi': '.avi', 'video/mov': '.mov', 'video/mp4': '.mp4', 'video/mpeg': '.mpeg',
+      'video/mpg': '.mpg', 'video/webm': '.webm', 'video/wmv': '.wmv', 'video/x-flv': '.flv',
+    };
+    temporaryPath = path.join(tmpdir(), `ielts-transcribe-${randomUUID()}${extensionByMime[mimeType]}`);
+    let receivedBytes = 0;
+    const sizeGuard = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        receivedBytes += chunk.length;
+        if (receivedBytes > maxBytes) {
+          callback(Object.assign(new Error('文件超过 200 MB。请剪出需要精听的片段，或先导出压缩后的音频。'), { status: 413 }));
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
+    await pipeline(req, sizeGuard, createWriteStream(temporaryPath, { flags: 'wx' }));
+    if (receivedBytes === 0) throw new Error('没有收到文件内容，请重新选择文件。');
+
+    const encodedName = req.header('x-media-name') || 'learning-media';
+    let displayName = 'learning-media';
+    try { displayName = decodeURIComponent(encodedName); } catch { displayName = encodedName; }
+    displayName = displayName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 100) || 'learning-media';
+    uploadedFile = await ai.files.upload({
+      file: temporaryPath,
+      config: { mimeType, displayName },
+    });
+    if (!uploadedFile.uri || !uploadedFile.name) throw new Error('Gemini 文件上传没有返回可用地址。');
+
+    for (let attempt = 0; uploadedFile.state === 'PROCESSING' && attempt < 90; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      uploadedFile = await ai.files.get({ name: uploadedFile.name });
+    }
+    if (uploadedFile.state === 'FAILED') throw new Error('Gemini 无法处理这个文件。请换成常见的 MP3、M4A、MP4 或 WAV 格式。');
+    if (uploadedFile.state === 'PROCESSING') throw new Error('文件处理超时，请缩短视频片段后重试。');
+
+    const response = await ai.models.generateContent({
+      model: client.model,
+      contents: [
+        {
+          fileData: { fileUri: uploadedFile.uri, mimeType: uploadedFile.mimeType || mimeType },
+        },
+        {
+          text: `请把这个音频或视频中的英语口语转写为真实、完整的英文逐句字幕，并给出每句在媒体中的开始和结束时间（秒）。
+要求：
+1. 只写媒体中实际听到的语音，不得补写、推测或润色原话；听不清的词标为 [unclear]。
+2. 按自然语义切成适合精听的短句，按时间顺序排列。
+3. start 和 end 必须对应媒体播放时间，单位为秒；不要平均分配或估算时间。每句 end 必须大于 start。
+4. 为每句提供准确、自然的简体中文翻译。
+5. transcript 是完整英文原文。没有可辨识语音时，transcript 置空且 subtitles 返回空数组。
+只返回符合指定 JSON Schema 的结果。`,
+        },
+      ],
+      config: {
+        responseMimeType: 'application/json',
+        maxOutputTokens: 8192,
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            transcript: { type: Type.STRING },
+            subtitles: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  start: { type: Type.NUMBER },
+                  end: { type: Type.NUMBER },
+                  text: { type: Type.STRING },
+                  translation: { type: Type.STRING },
+                },
+                required: ['start', 'end', 'text', 'translation'],
+              },
+            },
+          },
+          required: ['transcript', 'subtitles'],
+        },
+      },
+    });
+
+    const parsed = safeJSONParse(response.text || '{}');
+    const subtitles = (Array.isArray(parsed.subtitles) ? parsed.subtitles : [])
+      .filter((subtitle: any) => typeof subtitle?.text === 'string' && subtitle.text.trim())
+      .map((subtitle: any, index: number) => {
+        const start = Number.isFinite(Number(subtitle.start)) ? Math.max(0, Number(subtitle.start)) : 0;
+        const end = Number.isFinite(Number(subtitle.end)) ? Number(subtitle.end) : start + 2;
+        return {
+          id: `asr-${Date.now()}-${index}`,
+          start: Number(start.toFixed(2)),
+          end: Number(Math.max(start + 0.25, end).toFixed(2)),
+          text: subtitle.text.trim(),
+          translation: typeof subtitle.translation === 'string' ? subtitle.translation.trim() : '',
+        };
+      });
+    if (subtitles.length === 0) {
+      return res.status(422).json({ error: '没有识别到清晰语音。请确认文件中有人声，或换一个片段再试。' });
+    }
+    return res.json({
+      success: true,
+      transcript: typeof parsed.transcript === 'string' ? parsed.transcript : subtitles.map((item: any) => item.text).join(' '),
+      subtitles,
+      source: 'Gemini 音视频语音识别',
+    });
+  } catch (error: any) {
+    console.error('Error transcribing uploaded media:', error);
+    return res.status(error.status || (error.code === 'LLM_NOT_CONFIGURED' ? 403 : 500)).json({
+      error: error.message || '语音识别失败，请检查 Gemini 配置或更换文件后重试。',
+    });
+  } finally {
+    if (uploadedFile?.name && ai) {
+      await ai.files.delete({ name: uploadedFile.name }).catch((error: any) => {
+        console.warn('Failed to delete temporary Gemini media file:', error?.message);
+      });
+    }
+    if (temporaryPath) await unlink(temporaryPath).catch(() => undefined);
+  }
+});
+
 app.post('/api/gemini/transcribe-audio', async (req, res) => {
   try {
     let { audioData, mimeType, sampleName } = req.body;

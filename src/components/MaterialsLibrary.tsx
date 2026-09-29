@@ -289,8 +289,10 @@ export default function MaterialsLibrary({
   const [globalTimeShift, setGlobalTimeShift] = useState(0);
   const [editorTab, setEditorTab] = useState<'paste' | 'shift' | 'excel'>('excel');
   const [isExtractingCC, setIsExtractingCC] = useState(false);
+  const [isTranscribingMedia, setIsTranscribingMedia] = useState(false);
   const [ccVideoUrl, setCcVideoUrl] = useState('');
   const [isParsingExcel, setIsParsingExcel] = useState(false);
+  const mediaFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Material rename modal state
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
@@ -1538,6 +1540,77 @@ export default function MaterialsLibrary({
       alert(err.message || '无法获取该视频的官方字幕。请粘贴真实文稿或字幕，再使用 AI 翻译和分段。');
     } finally {
       setIsExtractingCC(false);
+    }
+  };
+
+  const handleTranscribeMediaFile = async (file: File) => {
+    if (!activeMaterial) return;
+    const extension = file.name.split('.').pop()?.toLowerCase() || '';
+    const mimeByExtension: Record<string, string> = {
+      aac: 'audio/aac', flac: 'audio/flac', mp3: 'audio/mpeg', m4a: 'audio/mp4', mp4: 'video/mp4',
+      mov: 'video/mov', avi: 'video/avi', mpeg: 'video/mpeg', mpg: 'video/mpg', webm: file.type.startsWith('audio/') ? 'audio/webm' : 'video/webm',
+      wav: 'audio/wav', wma: 'audio/mp4', ogg: 'audio/ogg', '3gp': 'video/3gpp', flv: 'video/x-flv', wmv: 'video/wmv',
+    };
+    let mimeType = file.type.toLowerCase();
+    if (mimeType === 'audio/x-m4a') mimeType = 'audio/mp4';
+    if (mimeType === 'video/quicktime') mimeType = 'video/mov';
+    if (mimeType === 'video/x-msvideo') mimeType = 'video/avi';
+    if (mimeType === 'video/x-ms-wmv') mimeType = 'video/wmv';
+    if (mimeType === 'audio/x-wav') mimeType = 'audio/wav';
+    if (!mimeType || mimeType === 'application/octet-stream') mimeType = mimeByExtension[extension] || '';
+    if (!mimeType.startsWith('audio/') && !mimeType.startsWith('video/')) {
+      alert('请选择常见音频或视频文件，例如 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM。');
+      return;
+    }
+    if (file.size > 200 * 1024 * 1024) {
+      alert('文件不能超过 200 MB。建议剪出需要精听的片段，或先导出压缩后的音频。');
+      return;
+    }
+
+    setIsTranscribingMedia(true);
+    try {
+      const response = await fetch('/api/gemini/transcribe-media', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Media-Mime-Type': mimeType,
+          'X-Media-Name': encodeURIComponent(file.name),
+        },
+        body: file,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '音视频转写失败');
+      if (!Array.isArray(result.subtitles) || result.subtitles.length === 0) {
+        throw new Error('没有识别到可导入的语音片段。');
+      }
+
+      const importedSubtitles = result.subtitles.map((subtitle: any, index: number) => ({
+        ...subtitle,
+        id: subtitle.id || `asr-${Date.now()}-${index}`,
+        start: Number.isFinite(Number(subtitle.start)) ? Number(subtitle.start) : 0,
+        end: Number.isFinite(Number(subtitle.end)) ? Number(subtitle.end) : Number(subtitle.start || 0) + 2,
+        text: String(subtitle.text || '').trim(),
+        translation: String(subtitle.translation || ''),
+      })).filter((subtitle: any) => subtitle.text);
+      const updatedMaterials = materials.map(material => material.id === activeMaterial.id
+        ? {
+            ...material,
+            content: result.transcript || importedSubtitles.map((subtitle: any) => subtitle.text).join(' '),
+            videoSubtitles: importedSubtitles,
+            sentences: importedSubtitles.map((subtitle: any) => subtitle.text),
+          }
+        : material);
+      setMaterials(updatedMaterials);
+      localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
+      setEditorSubtitles(importedSubtitles);
+      setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
+      alert(`语音识别完成，已导入 ${importedSubtitles.length} 句字幕。可以在下方校对并保存修改。`);
+    } catch (error: any) {
+      console.error('Error transcribing media file:', error);
+      alert(`音视频转写失败：${error.message || '请重试或检查 Gemini API Key 配置。'}`);
+    } finally {
+      setIsTranscribingMedia(false);
+      if (mediaFileInputRef.current) mediaFileInputRef.current.value = '';
     }
   };
 
@@ -4756,6 +4829,28 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                         {isExtractingCC ? '正在获取并翻译 YouTube 官方字幕…' : '抓取 YouTube 官方字幕'}
                       </button>
                     )}
+
+                    <input
+                      ref={mediaFileInputRef}
+                      type="file"
+                      accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-msvideo,video/mpeg,video/3gpp,.mp3,.m4a,.wav,.ogg,.flac,.aac,.mp4,.mov,.avi,.webm,.wmv,.mpeg,.mpg,.3gp"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void handleTranscribeMediaFile(file);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => mediaFileInputRef.current?.click()}
+                      disabled={isTranscribingMedia || isExtractingCC}
+                      className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-950 transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {isTranscribingMedia ? '正在上传并识别音视频，请稍候…' : '🎙️ 上传本地音频/视频并转写'}
+                    </button>
+                    <p className="text-[10px] text-stone-500">
+                      适用于没有字幕的内容。选择本地 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM 文件，单个文件最大 200 MB；需先配置 Gemini API Key。
+                    </p>
 
                     <textarea
                       rows={18}

@@ -247,6 +247,23 @@ export async function getLLMClientForRequest(req: Request): Promise<LLMClient> {
   return makeLLMClient(cfg);
 }
 
+/** Create a Gemini client for media tasks that need the Files API (audio/video uploads). */
+export async function getGeminiMediaClientForRequest(req: Request): Promise<{ ai: GoogleGenAI; model: string }> {
+  const uid = (req as any).userId as number | undefined;
+  if (!uid) throw new HttpError(401, 'UNAUTHORIZED');
+  const user = findUserById(uid);
+  if (!user) throw new HttpError(401, '用户不存在');
+  const cfg = parseLLMConfig(user.llm_json);
+  if (!cfg) throw new LLMNotConfiguredError();
+  if (cfg.provider !== 'gemini') {
+    throw new HttpError(400, '音视频转写需要在「账号与设置 → AI 大模型」配置 Gemini API Key。');
+  }
+  return {
+    ai: new GoogleGenAI({ apiKey: cfg.apiKey }),
+    model: cfg.model || 'gemini-3.6-flash',
+  };
+}
+
 export function saveUserLLMConfig(userId: number, cfg: LLMConfig | null): void {
   setUserLLMJson(userId, cfg ? serializeLLMConfig(cfg) : '');
 }
