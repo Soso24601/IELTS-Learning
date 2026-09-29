@@ -1191,8 +1191,11 @@ async function fetchYouTubeRealSubtitles(videoId: string): Promise<any[] | null>
   try {
     const captionBaseUrl = await fetchYoutubeCaptionUrl(videoId);
     if (!captionBaseUrl) return null;
-    const captionJsonUrl = `${captionBaseUrl}${captionBaseUrl.includes('?') ? '&' : '?'}fmt=json`;
-    const res = await fetch(captionJsonUrl);
+    const captionJsonUrl = `${captionBaseUrl}${captionBaseUrl.includes('?') ? '&' : '?'}fmt=json3`;
+    const res = await fetch(captionJsonUrl, {
+      signal: AbortSignal.timeout(12000),
+      headers: { 'User-Agent': HTTP_UA, 'Referer': `https://www.youtube.com/watch?v=${videoId}` },
+    });
     if (!res.ok) return null;
     const json = await res.json();
     const events: any[] = json.events || [];
@@ -1397,7 +1400,40 @@ function extractYoutubeVideoId(url: string): string | null {
   return (match && match[2].length === 11) ? match[2] : null;
 }
 
-// Highly robust scraper helper to extract caption track baseUrl using multiple direct methods and regex fallback
+function extractBalancedJson(source: string, start: number): string | null {
+  const firstBrace = source.indexOf('{', start);
+  if (firstBrace < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = firstBrace; i < source.length; i++) {
+    const char = source[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) return source.slice(firstBrace, i + 1);
+  }
+  return null;
+}
+
+function getYoutubeCaptionTracks(playerResponse: any): any[] {
+  const tracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  return Array.isArray(tracks) ? tracks.filter((track: any) => typeof track?.baseUrl === 'string') : [];
+}
+
+function selectYoutubeCaptionTrack(tracks: any[]): any | null {
+  return tracks.find((track: any) => track.languageCode === 'en' && !track.kind)
+    || tracks.find((track: any) => track.languageCode === 'en')
+    || tracks[0]
+    || null;
+}
+
+// Resolve official caption tracks from the watch page, then fall back to YouTube's player endpoint.
 async function fetchYoutubeCaptionUrl(videoId: string): Promise<string | null> {
   const urls = [
     `https://www.youtube.com/watch?v=${videoId}&hl=en&gl=US`,
@@ -1408,6 +1444,7 @@ async function fetchYoutubeCaptionUrl(videoId: string): Promise<string | null> {
     try {
       console.log(`[YouTube Captions Scraper] Trying url: ${url}`);
       const res = await fetch(url, {
+        signal: AbortSignal.timeout(12000),
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
           'Accept-Language': 'en-US,en;q=0.9',
@@ -1418,33 +1455,17 @@ async function fetchYoutubeCaptionUrl(videoId: string): Promise<string | null> {
       const html = await res.text();
 
       // Path A: ytInitialPlayerResponse JSON extraction
-      let playerResponseStr = '';
-      const match = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
-      if (match) playerResponseStr = match[1];
-      else {
-        const match2 = html.match(/var\s+ytInitialPlayerResponse\s*=\s*({.+?});/);
-        if (match2) playerResponseStr = match2[1];
-        else {
-          const match3 = html.match(/"ytInitialPlayerResponse"\s*:\s*({.+?})/);
-          if (match3) playerResponseStr = match3[1];
-        }
-      }
-
-      if (playerResponseStr) {
+      const responseIndex = html.indexOf('ytInitialPlayerResponse');
+      const playerResponseJson = responseIndex >= 0 ? extractBalancedJson(html, responseIndex) : null;
+      if (playerResponseJson) {
         try {
-          const playerResponse = JSON.parse(playerResponseStr);
-          const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-          if (captionTracks && Array.isArray(captionTracks) && captionTracks.length > 0) {
-            let track = captionTracks.find((t: any) => t.languageCode === 'en' && !t.kind);
-            if (!track) track = captionTracks.find((t: any) => t.languageCode === 'en');
-            if (!track) track = captionTracks[0];
-            if (track && track.baseUrl) {
-              console.log(`[YouTube Captions Scraper] Found caption baseUrl in ytInitialPlayerResponse: ${track.baseUrl}`);
-              return track.baseUrl;
-            }
+          const track = selectYoutubeCaptionTrack(getYoutubeCaptionTracks(JSON.parse(playerResponseJson)));
+          if (track?.baseUrl) {
+            console.log(`[YouTube Captions Scraper] Found caption track in page response (${track.languageCode || 'unknown'})`);
+            return track.baseUrl;
           }
-        } catch (e) {
-          console.warn('[YouTube Captions Scraper] Failed to parse playerResponse JSON, continuing to regex fallback...');
+        } catch (e: any) {
+          console.warn('[YouTube Captions Scraper] Failed to parse player response:', e?.message);
         }
       }
 
@@ -1477,6 +1498,45 @@ async function fetchYoutubeCaptionUrl(videoId: string): Promise<string | null> {
     }
   }
 
+  // Some watch-page variants omit the initial player response but include the API key.
+  try {
+    const pageRes = await fetch(urls[0], {
+      signal: AbortSignal.timeout(12000),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    if (pageRes.ok) {
+      const html = await pageRes.text();
+      const apiKey = html.match(/"INNERTUBE_API_KEY"\s*:\s*"([^"]+)"/)?.[1];
+      const contextMatch = html.match(/"INNERTUBE_CONTEXT"\s*:\s*({[\s\S]*?})\s*,\s*"INNERTUBE_CONTEXT_CLIENT_NAME"/);
+      let context: any = { client: { clientName: 'WEB', clientVersion: '2.20240919.00.00', hl: 'en', gl: 'US' } };
+      if (contextMatch) {
+        try { context = JSON.parse(contextMatch[1]); } catch { /* use safe WEB defaults */ }
+      }
+      if (apiKey) {
+        const playerRes = await fetch(`https://www.youtube.com/youtubei/v1/player?key=${encodeURIComponent(apiKey)}`, {
+          method: 'POST',
+          signal: AbortSignal.timeout(12000),
+          headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0', 'Origin': 'https://www.youtube.com' },
+          body: JSON.stringify({ context, videoId, contentCheckOk: true, racyCheckOk: true }),
+        });
+        if (playerRes.ok) {
+          const playerResponse = await playerRes.json();
+          const track = selectYoutubeCaptionTrack(getYoutubeCaptionTracks(playerResponse));
+          if (track?.baseUrl) {
+            console.log(`[YouTube Captions Scraper] Found caption track via player endpoint (${track.languageCode || 'unknown'})`);
+            return track.baseUrl;
+          }
+          console.warn(`[YouTube Captions Scraper] Player endpoint returned no tracks; playability=${playerResponse?.playabilityStatus?.status || 'unknown'}`);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[YouTube Captions Scraper] Player endpoint fallback failed:', err?.message);
+  }
+
   return null;
 }
 
@@ -1501,9 +1561,12 @@ app.post('/api/youtube/subtitles', async (req, res) => {
       throw new Error('No caption track URL could be resolved directly from watch page or embed source. Subtitles may be disabled or restricted.');
     }
 
-    // Append fmt=json to retrieve the subtitle track in clean YouTube JSON timing format
-    const captionJsonUrl = `${captionBaseUrl}${captionBaseUrl.includes('?') ? '&' : '?'}fmt=json`;
-    const captionRes = await fetch(captionJsonUrl);
+    // json3 returns timed caption events with start times and durations.
+    const captionJsonUrl = `${captionBaseUrl}${captionBaseUrl.includes('?') ? '&' : '?'}fmt=json3`;
+    const captionRes = await fetch(captionJsonUrl, {
+      signal: AbortSignal.timeout(12000),
+      headers: { 'User-Agent': HTTP_UA, 'Referer': `https://www.youtube.com/watch?v=${videoId}` },
+    });
     if (!captionRes.ok) {
       throw new Error(`Failed to download caption track: HTTP ${captionRes.status}`);
     }
