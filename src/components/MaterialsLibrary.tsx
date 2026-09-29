@@ -294,6 +294,9 @@ export default function MaterialsLibrary({
   const [ccVideoUrl, setCcVideoUrl] = useState('');
   const [isParsingExcel, setIsParsingExcel] = useState(false);
   const mediaFileInputRef = useRef<HTMLInputElement | null>(null);
+  const tabAudioRecorderRef = useRef<MediaRecorder | null>(null);
+  const tabAudioStreamRef = useRef<MediaStream | null>(null);
+  const [isRecordingTabAudio, setIsRecordingTabAudio] = useState(false);
 
   // Material rename modal state
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
@@ -1544,7 +1547,7 @@ export default function MaterialsLibrary({
     }
   };
 
-  const receiveTranscription = async (jobId: string, materialId: string) => {
+  const receiveTranscription = async (jobId: string, materialId: string, startOffset = 0) => {
       let result: any;
       for (let attempt = 0; attempt < 360; attempt++) {
         await new Promise((resolve) => window.setTimeout(resolve, 5000));
@@ -1566,8 +1569,8 @@ export default function MaterialsLibrary({
       const importedSubtitles = result.subtitles.map((subtitle: any, index: number) => ({
         ...subtitle,
         id: subtitle.id || `asr-${Date.now()}-${index}`,
-        start: Number.isFinite(Number(subtitle.start)) ? Number(subtitle.start) : 0,
-        end: Number.isFinite(Number(subtitle.end)) ? Number(subtitle.end) : Number(subtitle.start || 0) + 2,
+        start: (Number.isFinite(Number(subtitle.start)) ? Number(subtitle.start) : 0) + startOffset,
+        end: (Number.isFinite(Number(subtitle.end)) ? Number(subtitle.end) : Number(subtitle.start || 0) + 2) + startOffset,
         text: String(subtitle.text || '').trim(),
         translation: String(subtitle.translation || ''),
       })).filter((subtitle: any) => subtitle.text);
@@ -1612,8 +1615,8 @@ export default function MaterialsLibrary({
     }
   };
 
-  const handleTranscribeMediaFile = async (file: File) => {
-    if (!activeMaterial) return;
+  const handleTranscribeMediaFile = async (file: File, materialId = activeMaterial?.id, startOffset = 0) => {
+    if (!materialId) return;
     const extension = file.name.split('.').pop()?.toLowerCase() || '';
     const mimeByExtension: Record<string, string> = {
       aac: 'audio/aac', flac: 'audio/flac', mp3: 'audio/mpeg', m4a: 'audio/mp4', mp4: 'video/mp4',
@@ -1651,7 +1654,7 @@ export default function MaterialsLibrary({
       const uploadResult = await response.json();
       if (!response.ok) throw new Error(uploadResult.error || '音视频转写失败');
       if (!uploadResult.jobId) throw new Error('服务器没有返回转写任务编号。');
-      await receiveTranscription(uploadResult.jobId, activeMaterial.id);
+      await receiveTranscription(uploadResult.jobId, materialId, startOffset);
     } catch (error: any) {
       console.error('Error transcribing media file:', error);
       alert(`音视频转写失败：${error.message || '请重试或检查百炼 API Key 配置。'}`);
@@ -1659,6 +1662,64 @@ export default function MaterialsLibrary({
       setIsTranscribingMedia(false);
       setTranscribingMediaMessage('正在上传音视频…');
       if (mediaFileInputRef.current) mediaFileInputRef.current.value = '';
+    }
+  };
+
+  const stopTabAudioRecording = () => {
+    const recorder = tabAudioRecorderRef.current;
+    if (recorder?.state === 'recording') recorder.stop();
+    else tabAudioStreamRef.current?.getTracks().forEach(track => track.stop());
+  };
+
+  const startTabAudioRecording = async () => {
+    if (!activeMaterial || isRecordingTabAudio || isTranscribingMedia) return;
+    if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === 'undefined') {
+      alert('当前浏览器不支持标签页音频录制，请使用最新版 Chrome，或上传对应音频文件。');
+      return;
+    }
+    const materialId = activeMaterial.id;
+    let displayStream: MediaStream | null = null;
+    try {
+      displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      const audioTracks = displayStream.getAudioTracks();
+      if (!audioTracks.length) throw new Error('没有收到标签页音频。请在共享窗口选择播放 YouTube 的「Chrome 标签页」，并勾选「同时分享标签页音频」。');
+      const recordingMime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type));
+      if (!recordingMime) throw new Error('当前浏览器不支持所需的录音格式，请改用最新版 Chrome。');
+      const stream = displayStream;
+      const startOffset = Math.max(0, Number(ytPlayerRef.current?.getCurrentTime?.() ?? videoCurrentTimeRef.current) || 0);
+      const recorder = new MediaRecorder(new MediaStream(audioTracks), { mimeType: recordingMime, audioBitsPerSecond: 64000 });
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = event => { if (event.data.size > 0) chunks.push(event.data); };
+      recorder.onstop = () => {
+        stream.getTracks().forEach(track => track.stop());
+        tabAudioRecorderRef.current = null;
+        tabAudioStreamRef.current = null;
+        setIsRecordingTabAudio(false);
+        const baseMime = recordingMime.split(';')[0];
+        const blob = new Blob(chunks, { type: baseMime });
+        if (blob.size < 1024) {
+          alert('没有录到足够的声音。请先播放 YouTube 视频，再选择共享播放视频的 Chrome 标签页和音频。');
+          return;
+        }
+        if (blob.size > 200 * 1024 * 1024) {
+          alert('录制音频超过 200 MB，请缩短录制片段。');
+          return;
+        }
+        setIsSubtitleEditorOpen(true);
+        const extension = baseMime === 'audio/mp4' ? 'm4a' : 'webm';
+        void handleTranscribeMediaFile(new File([blob], `youtube-tab-audio.${extension}`, { type: baseMime }), materialId, startOffset);
+      };
+      stream.getTracks().forEach(track => {
+        track.onended = () => { if (recorder.state === 'recording') recorder.stop(); };
+      });
+      tabAudioStreamRef.current = stream;
+      tabAudioRecorderRef.current = recorder;
+      recorder.start(1000);
+      setIsRecordingTabAudio(true);
+      setIsSubtitleEditorOpen(false);
+    } catch (error: any) {
+      displayStream?.getTracks().forEach(track => track.stop());
+      if (error?.name !== 'NotAllowedError') alert(error?.message || '无法开始录制标签页音频。');
     }
   };
 
@@ -2937,6 +2998,14 @@ export default function MaterialsLibrary({
 
   return (
     <div className="space-y-6" id="materials-library-container">
+      {isRecordingTabAudio && (
+        <div className="fixed bottom-5 right-5 z-[100] flex max-w-[calc(100vw-2.5rem)] items-center gap-3 rounded-xl border border-amber-300 bg-white p-3 shadow-xl">
+          <span className="text-xs font-semibold text-stone-800">正在录制标签页音频；请播放视频</span>
+          <button type="button" onClick={stopTabAudioRecording} className="shrink-0 rounded-lg bg-stone-950 px-3 py-2 text-xs font-bold text-white hover:bg-stone-800">
+            结束录制并识别
+          </button>
+        </div>
+      )}
       
       {/* Category Tabs Indicator */}
       <div className="flex items-center justify-between border-b border-stone-200/80 pb-4">
@@ -3371,6 +3440,17 @@ export default function MaterialsLibrary({
                               className="w-full py-3 px-4 bg-amber-400 hover:bg-amber-500 disabled:bg-stone-300 text-stone-900 rounded-xl text-sm font-bold transition">
                               {isTranscribingMedia ? transcribingMediaMessage : '识别 YouTube 视频语音（百炼）'}
                             </button>
+                          )}
+
+                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
+                            <div className="space-y-1.5">
+                              <button type="button" onClick={() => void startTabAudioRecording()}
+                                disabled={isRecordingTabAudio || isTranscribingMedia}
+                                className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-950 hover:bg-amber-100 disabled:opacity-60">
+                                {isRecordingTabAudio ? '正在录制标签页音频…' : '服务器获取失败？录制播放中的标签页音频'}
+                              </button>
+                              <p className="text-[11px] leading-relaxed text-stone-500">选择播放视频的 Chrome 标签页并勾选“分享标签页音频”，然后播放视频；录完点右下角“结束录制并识别”。字幕会导入当前视频，录制需要与播放等长。</p>
+                            </div>
                           )}
 
                           {/* 无字幕时也内嵌原视频，让用户先看到真实视频 */}
@@ -4894,8 +4974,14 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                           {isTranscribingMedia ? transcribingMediaMessage : '识别 YouTube 视频语音（百炼）'}
                         </button>
                         <p className="text-[11px] text-stone-500">
-                          无需官方字幕。获取音轨后由百炼识别并导入本视频的文字稿，按百炼用量计费。请保持页面打开；视频最长 3 小时、音轨最大 200 MB。YouTube 限制访问时，可在下方上传对应音频，原视频链接会保留。
+                          无需官方字幕。获取音轨后由百炼识别并导入本视频的文字稿，按百炼用量计费。请保持页面打开；视频最长 3 小时、音轨最大 200 MB。
                         </p>
+                        <button type="button" onClick={() => void startTabAudioRecording()}
+                          disabled={isRecordingTabAudio || isTranscribingMedia}
+                          className="w-full rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-xs font-bold text-amber-950 hover:bg-amber-50 disabled:opacity-60">
+                          {isRecordingTabAudio ? '正在录制标签页音频…' : '服务器获取失败？录制播放中的标签页音频'}
+                        </button>
+                        <p className="text-[11px] text-stone-500">选择播放视频的 Chrome 标签页并勾选“分享标签页音频”；弹窗关闭后播放视频，录完点右下角“结束录制并识别”。录制需要与播放等长，字幕会放入当前视频；也可在下方上传对应音频。</p>
                       </div>
                     )}
 

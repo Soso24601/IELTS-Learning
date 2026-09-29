@@ -27,13 +27,21 @@ export function youtubeVideoId(input: string): string {
 export function youtubeDownloadError(error: any): Error {
   const text = String(error?.stderr || error?.message || '');
   if (error?.code === 'ENOENT') return new Error('服务器尚未安装音轨提取工具，请部署最新 Docker 版本。');
-  if (/sign in|bot|po token|403|429|private|unavailable|age.restricted/i.test(text)) {
-    return new Error('YouTube 限制了服务器获取这个视频的音轨。可在当前视频的字幕面板上传对应音频，原视频链接会保留；无需改成音频材料。');
-  }
   if (error?.killed || error?.code === 'ABORT_ERR' || /timed out|timeout/i.test(text)) {
-    return new Error('获取 YouTube 音轨超时，请稍后重试或上传对应音频。');
+    return new Error('获取 YouTube 音轨超时。可尝试在当前视频中录制播放中的标签页音频，或上传对应音频。');
   }
-  return new Error('无法获取 YouTube 音轨。请确认视频公开且能播放，或在当前视频中上传对应音频。');
+  if (/sign in|confirm you.re not a bot|po token/i.test(text)) return new Error('YouTube 要求服务器登录或通过反机器人验证，无法从服务器直接获取音轨。请在当前视频中录制播放中的标签页音频。');
+  if (/\b403\b|forbidden/i.test(text)) return new Error('YouTube 音轨地址向服务器返回 403，无法直接下载。请在当前视频中录制播放中的标签页音频。');
+  if (/\b429\b|too many requests/i.test(text)) return new Error('YouTube 暂时限制了服务器的请求，请稍后重试，或录制播放中的标签页音频。');
+  if (/private|age.restricted|members.only/i.test(text)) return new Error('视频需要登录或受权限限制，请确认浏览器中有观看权限，再录制标签页音频。');
+  if (/video unavailable|not available|unavailable/i.test(text)) return new Error('YouTube 返回视频不可用；请确认视频公开、未被删除并且能在浏览器中播放。');
+  return new Error('服务器无法获取 YouTube 音轨。请在当前视频中录制播放中的标签页音频，或上传对应音频。');
+}
+
+function logDownloadFailure(stage: 'metadata' | 'audio', id: string, error: any): void {
+  const raw = String(error?.stderr || error?.message || 'unknown error');
+  const detail = raw.replace(/https?:\/\/\S+/gi, '[URL]').replace(/\b[A-Za-z0-9_-]{40,}\b/g, '[TOKEN]').slice(-1200);
+  console.warn('YouTube audio extraction failed', { stage, videoId: id, exitCode: error?.code, detail });
 }
 
 export async function downloadYoutubeAudio(id: string, directory: string): Promise<{ path: string; mimeType: string }> {
@@ -45,7 +53,7 @@ export async function downloadYoutubeAudio(id: string, directory: string): Promi
   try {
     const result = await execFileAsync(executable, [...common, '--skip-download', '--dump-single-json', '--', url], { timeout: 90000, maxBuffer: 8 * 1024 * 1024 });
     info = JSON.parse(result.stdout);
-  } catch (error) { throw youtubeDownloadError(error); }
+  } catch (error) { logDownloadFailure('metadata', id, error); throw youtubeDownloadError(error); }
   if (info.is_live || info.live_status === 'is_live') throw new Error('暂不支持正在直播的视频，请在直播结束后识别。');
   if (!Number.isFinite(info.duration) || info.duration <= 0 || info.duration > 3 * 3600) throw new Error('请使用时长不超过 3 小时的普通视频。');
   if ((info.filesize || info.filesize_approx || 0) > MAX_AUDIO_BYTES) throw new Error('音轨超过 200 MB，请上传需要学习的音频片段。');
@@ -72,6 +80,7 @@ export async function downloadYoutubeAudio(id: string, directory: string): Promi
     output = result.stdout.trim().split('\n').pop() || '';
   } catch (error) {
     if (sizeExceeded) throw new Error('音轨超过 200 MB，请上传较短的音频片段。');
+    logDownloadFailure('audio', id, error);
     throw youtubeDownloadError(error);
   } finally { if (monitor) clearInterval(monitor); }
   if (!output || path.dirname(path.resolve(output)) !== path.resolve(directory)) throw new Error('未能获得音频文件，可能超过 200 MB 限制。');

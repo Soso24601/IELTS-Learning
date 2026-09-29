@@ -25,9 +25,11 @@ test('YouTube links support watch, share, embed and shorts while rejecting hosti
 
 test('provider failures are actionable and do not expose signed media URLs', () => {
   const error = youtubeDownloadError({ stderr: 'HTTP 403 https://example.com/audio?secret=do-not-display' });
-  assert.match(error.message, /YouTube.*限制/);
-  assert.match(error.message, /原视频链接会保留/);
+  assert.match(error.message, /403/);
+  assert.match(error.message, /录制播放中的标签页音频/);
   assert.doesNotMatch(error.message, /secret|example.com/);
+  assert.match(youtubeDownloadError({ stderr: 'Sign in to confirm you’re not a bot' }).message, /登录或通过反机器人验证/);
+  assert.match(youtubeDownloadError({ stderr: 'ERROR: Video unavailable' }).message, /视频不可用/);
   assert.match(youtubeDownloadError({ code: 'ENOENT' }).message, /安装/);
   assert.match(youtubeDownloadError({ killed: true }).message, /超时/);
 });
