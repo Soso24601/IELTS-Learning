@@ -5,16 +5,16 @@
 
 import express from 'express';
 import path from 'path';
-import { createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import { Type } from '@google/genai';
 import { installUserSystem } from './server/lib/routes';
-import { getGeminiMediaClientForRequest, getLLMClientForRequest } from './server/lib/llm';
+import { getASRConfigForUser, getLLMClientForRequest } from './server/lib/llm';
 import { assertSafeHttpUrl } from './server/lib/net';
 import { createServer as createViteServer } from 'vite';
 import { createRequire } from 'module';
@@ -28,6 +28,24 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+type TranscriptionJob = {
+  ownerId: number;
+  status: 'processing' | 'completed' | 'failed';
+  message: string;
+  result?: { transcript: string; subtitles: { id: string; start: number; end: number; text: string; translation: string }[] };
+  error?: string;
+  updatedAt: number;
+};
+const transcriptionJobs = new Map<string, TranscriptionJob>();
+const temporaryMedia = new Map<string, { path: string; mimeType: string }>();
+
+app.get('/api/asr/media/:token', (req, res) => {
+  const media = temporaryMedia.get(req.params.token);
+  if (!media) return res.status(404).end();
+  res.set({ 'Content-Type': media.mimeType, 'Cache-Control': 'no-store, private', 'X-Content-Type-Options': 'nosniff' });
+  createReadStream(media.path).on('error', () => res.status(404).end()).pipe(res);
+});
 
 // Initialize express middlewares with higher limits for base64 file uploads
 app.use(express.json({ limit: '50mb' }));
@@ -921,147 +939,156 @@ app.post('/api/gemini/summarize-material', async (req, res) => {
   }
 });
 
-// 6. Transcribe Audio (音频逐句转写，支持听力逐字听写)
-app.post('/api/gemini/transcribe-media', async (req, res) => {
+// Upload media to a private temporary file, then submit an async Alibaba Cloud Qwen ASR task.
+app.post('/api/asr/transcribe-media', async (req, res) => {
   const maxBytes = 200 * 1024 * 1024;
   const mimeType = String(req.header('x-media-mime-type') || '').toLowerCase().split(';')[0].trim();
   const allowedMimeTypes = new Set([
     'audio/aac', 'audio/flac', 'audio/mp3', 'audio/mp4', 'audio/m4a', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm',
     'video/3gpp', 'video/avi', 'video/mov', 'video/mp4', 'video/mpeg', 'video/mpg', 'video/webm', 'video/wmv', 'video/x-flv',
   ]);
-  if (!allowedMimeTypes.has(mimeType)) {
-    return res.status(400).json({ error: '文件格式不支持。请选择 MP3、M4A、WAV、OGG、MP4、MOV、AVI 或 WebM。' });
-  }
+  if (!allowedMimeTypes.has(mimeType)) return res.status(400).json({ error: '文件格式不支持，请使用 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM。' });
+  if (Number(req.header('content-length') || 0) > maxBytes) return res.status(413).json({ error: '文件超过 200 MB，请剪出需要精听的片段后重试。' });
 
-  const declaredSize = Number(req.header('content-length') || 0);
-  if (declaredSize > maxBytes) {
-    return res.status(413).json({ error: '文件超过 200 MB。请剪出需要精听的片段，或先导出压缩后的音频。' });
-  }
-
-  let ai: any;
-  let uploadedFile: any;
-  let temporaryPath = '';
+  const ownerId = (req as any).userId as number;
+  const config = getASRConfigForUser(ownerId);
+  if (!config) return res.status(403).json({ error: '请先到右上角「账号与设置 → 语音识别」配置阿里云百炼 API Key。' });
+  const origin = req.header('origin');
+  const host = req.header('host');
+  let publicOrigin = '';
   try {
-    const client = await getGeminiMediaClientForRequest(req);
-    ai = client.ai;
-    const extensionByMime: Record<string, string> = {
-      'audio/aac': '.aac', 'audio/flac': '.flac', 'audio/mp3': '.mp3', 'audio/mp4': '.m4a', 'audio/m4a': '.m4a',
-      'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'audio/webm': '.webm',
-      'video/3gpp': '.3gp', 'video/avi': '.avi', 'video/mov': '.mov', 'video/mp4': '.mp4', 'video/mpeg': '.mpeg',
-      'video/mpg': '.mpg', 'video/webm': '.webm', 'video/wmv': '.wmv', 'video/x-flv': '.flv',
-    };
-    temporaryPath = path.join(tmpdir(), `ielts-transcribe-${randomUUID()}${extensionByMime[mimeType]}`);
+    const parsedOrigin = new URL(origin || '');
+    if (!host || parsedOrigin.host !== host || (process.env.NODE_ENV === 'production' && parsedOrigin.protocol !== 'https:')) throw new Error();
+    publicOrigin = parsedOrigin.origin;
+  } catch {
+    return res.status(400).json({ error: '无法确认网站公开地址；请从网站页面重新上传，确保浏览器允许发送来源信息。' });
+  }
+
+  const extensionByMime: Record<string, string> = {
+    'audio/aac': '.aac', 'audio/flac': '.flac', 'audio/mp3': '.mp3', 'audio/mp4': '.m4a', 'audio/m4a': '.m4a',
+    'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'audio/webm': '.webm',
+    'video/3gpp': '.3gp', 'video/avi': '.avi', 'video/mov': '.mov', 'video/mp4': '.mp4', 'video/mpeg': '.mpeg',
+    'video/mpg': '.mpg', 'video/webm': '.webm', 'video/wmv': '.wmv', 'video/x-flv': '.flv',
+  };
+  const temporaryPath = path.join(tmpdir(), `ielts-asr-${randomUUID()}${extensionByMime[mimeType]}`);
+  try {
     let receivedBytes = 0;
     const sizeGuard = new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         receivedBytes += chunk.length;
-        if (receivedBytes > maxBytes) {
-          callback(Object.assign(new Error('文件超过 200 MB。请剪出需要精听的片段，或先导出压缩后的音频。'), { status: 413 }));
-          return;
-        }
-        callback(null, chunk);
+        callback(receivedBytes > maxBytes
+          ? Object.assign(new Error('文件超过 200 MB，请剪出需要精听的片段后重试。'), { status: 413 })
+          : null, receivedBytes > maxBytes ? undefined : chunk);
       },
     });
     await pipeline(req, sizeGuard, createWriteStream(temporaryPath, { flags: 'wx' }));
-    if (receivedBytes === 0) throw new Error('没有收到文件内容，请重新选择文件。');
+    if (!receivedBytes) throw new Error('没有收到文件内容，请重新选择文件。');
 
-    const encodedName = req.header('x-media-name') || 'learning-media';
-    let displayName = 'learning-media';
-    try { displayName = decodeURIComponent(encodedName); } catch { displayName = encodedName; }
-    displayName = displayName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 100) || 'learning-media';
-    uploadedFile = await ai.files.upload({
-      file: temporaryPath,
-      config: { mimeType, displayName },
-    });
-    if (!uploadedFile.uri || !uploadedFile.name) throw new Error('Gemini 文件上传没有返回可用地址。');
+    const token = randomBytes(32).toString('hex');
+    const jobId = randomUUID();
+    temporaryMedia.set(token, { path: temporaryPath, mimeType });
+    transcriptionJobs.set(jobId, { ownerId, status: 'processing', message: '正在提交百炼语音识别任务…', updatedAt: Date.now() });
+    res.status(202).json({ jobId });
 
-    for (let attempt = 0; uploadedFile.state === 'PROCESSING' && attempt < 90; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      uploadedFile = await ai.files.get({ name: uploadedFile.name });
-    }
-    if (uploadedFile.state === 'FAILED') throw new Error('Gemini 无法处理这个文件。请换成常见的 MP3、M4A、MP4 或 WAV 格式。');
-    if (uploadedFile.state === 'PROCESSING') throw new Error('文件处理超时，请缩短视频片段后重试。');
-
-    const response = await ai.models.generateContent({
-      model: client.model,
-      contents: [
-        {
-          fileData: { fileUri: uploadedFile.uri, mimeType: uploadedFile.mimeType || mimeType },
-        },
-        {
-          text: `请把这个音频或视频中的英语口语转写为真实、完整的英文逐句字幕，并给出每句在媒体中的开始和结束时间（秒）。
-要求：
-1. 只写媒体中实际听到的语音，不得补写、推测或润色原话；听不清的词标为 [unclear]。
-2. 按自然语义切成适合精听的短句，按时间顺序排列。
-3. start 和 end 必须对应媒体播放时间，单位为秒；不要平均分配或估算时间。每句 end 必须大于 start。
-4. 为每句提供准确、自然的简体中文翻译。
-5. transcript 是完整英文原文。没有可辨识语音时，transcript 置空且 subtitles 返回空数组。
-只返回符合指定 JSON Schema 的结果。`,
-        },
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        maxOutputTokens: 8192,
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            transcript: { type: Type.STRING },
-            subtitles: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  start: { type: Type.NUMBER },
-                  end: { type: Type.NUMBER },
-                  text: { type: Type.STRING },
-                  translation: { type: Type.STRING },
-                },
-                required: ['start', 'end', 'text', 'translation'],
-              },
-            },
-          },
-          required: ['transcript', 'subtitles'],
-        },
-      },
-    });
-
-    const parsed = safeJSONParse(response.text || '{}');
-    const subtitles = (Array.isArray(parsed.subtitles) ? parsed.subtitles : [])
-      .filter((subtitle: any) => typeof subtitle?.text === 'string' && subtitle.text.trim())
-      .map((subtitle: any, index: number) => {
-        const start = Number.isFinite(Number(subtitle.start)) ? Math.max(0, Number(subtitle.start)) : 0;
-        const end = Number.isFinite(Number(subtitle.end)) ? Number(subtitle.end) : start + 2;
-        return {
-          id: `asr-${Date.now()}-${index}`,
-          start: Number(start.toFixed(2)),
-          end: Number(Math.max(start + 0.25, end).toFixed(2)),
-          text: subtitle.text.trim(),
-          translation: typeof subtitle.translation === 'string' ? subtitle.translation.trim() : '',
-        };
-      });
-    if (subtitles.length === 0) {
-      return res.status(422).json({ error: '没有识别到清晰语音。请确认文件中有人声，或换一个片段再试。' });
-    }
-    return res.json({
-      success: true,
-      transcript: typeof parsed.transcript === 'string' ? parsed.transcript : subtitles.map((item: any) => item.text).join(' '),
-      subtitles,
-      source: 'Gemini 音视频语音识别',
+    void runAlibabaTranscription(jobId, token, publicOrigin, config, req).catch((error: any) => {
+      console.error('Alibaba ASR task failed:', error);
+      const job = transcriptionJobs.get(jobId);
+      if (job) {
+        job.status = 'failed';
+        job.error = error?.message || '百炼语音识别失败，请检查 API Key、地域和文件格式后重试。';
+        job.updatedAt = Date.now();
+      }
+    }).finally(async () => {
+      temporaryMedia.delete(token);
+      await unlink(temporaryPath).catch(() => undefined);
+      setTimeout(() => transcriptionJobs.delete(jobId), 10 * 60 * 1000).unref();
     });
   } catch (error: any) {
-    console.error('Error transcribing uploaded media:', error);
-    return res.status(error.status || (error.code === 'LLM_NOT_CONFIGURED' ? 403 : 500)).json({
-      error: error.message || '语音识别失败，请检查 Gemini 配置或更换文件后重试。',
-    });
-  } finally {
-    if (uploadedFile?.name && ai) {
-      await ai.files.delete({ name: uploadedFile.name }).catch((error: any) => {
-        console.warn('Failed to delete temporary Gemini media file:', error?.message);
-      });
-    }
-    if (temporaryPath) await unlink(temporaryPath).catch(() => undefined);
+    await unlink(temporaryPath).catch(() => undefined);
+    console.error('Error uploading media for Alibaba ASR:', error);
+    return res.status(error.status || 500).json({ error: error.message || '音视频上传失败，请重试。' });
   }
 });
+
+app.get('/api/asr/transcribe-media/:jobId', (req, res) => {
+  const job = transcriptionJobs.get(req.params.jobId);
+  if (!job || job.ownerId !== (req as any).userId) return res.status(404).json({ error: '转写任务不存在或已过期。' });
+  res.json({ status: job.status, message: job.message, result: job.result, error: job.error });
+});
+
+async function runAlibabaTranscription(
+  jobId: string,
+  token: string,
+  publicOrigin: string,
+  config: { region: 'beijing' | 'singapore'; apiKey: string },
+  req: express.Request,
+) {
+  const job = transcriptionJobs.get(jobId)!;
+  const baseUrl = config.region === 'beijing' ? 'https://dashscope.aliyuncs.com/api/v1' : 'https://dashscope-intl.aliyuncs.com/api/v1';
+  const headers = { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' };
+  const mediaUrl = `${publicOrigin}/api/asr/media/${token}`;
+  const submit = await fetch(`${baseUrl}/services/audio/asr/transcription`, {
+    method: 'POST',
+    headers: { ...headers, 'X-DashScope-Async': 'enable' },
+    body: JSON.stringify({ model: 'qwen3-asr-flash-filetrans', input: { file_url: mediaUrl }, parameters: { channel_id: [0], enable_itn: false, enable_words: false } }),
+  });
+  const submitData: any = await submit.json().catch(() => ({}));
+  if (!submit.ok || !submitData.output?.task_id) throw new Error(submitData.message || submitData.code || `百炼提交任务失败（HTTP ${submit.status}），请确认 API Key 地域和账户权限。`);
+  job.message = '百炼正在识别音视频…';
+  job.updatedAt = Date.now();
+
+  let taskData: any;
+  for (let attempt = 0; attempt < 300; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const poll = await fetch(`${baseUrl}/tasks/${encodeURIComponent(submitData.output.task_id)}`, { headers });
+    taskData = await poll.json().catch(() => ({}));
+    if (!poll.ok) throw new Error(taskData.message || taskData.code || `查询百炼任务失败（HTTP ${poll.status}）。`);
+    const status = taskData.output?.task_status;
+    if (status === 'SUCCEEDED') break;
+    if (status === 'FAILED' || status === 'UNKNOWN') throw new Error(taskData.output?.message || taskData.message || `百炼识别任务${status === 'FAILED' ? '失败' : '已失效'}。`);
+    job.updatedAt = Date.now();
+  }
+  if (taskData?.output?.task_status !== 'SUCCEEDED') throw new Error('语音识别等待超时，请缩短视频片段后重试。');
+  const resultUrl = taskData.output?.result?.transcription_url;
+  if (!resultUrl) throw new Error('百炼任务已完成，但没有返回识别结果地址。');
+  const fileResultResponse = await fetch(resultUrl);
+  if (!fileResultResponse.ok) throw new Error(`下载百炼识别结果失败（HTTP ${fileResultResponse.status}）。`);
+  const fileResult: any = await fileResultResponse.json();
+  const transcript = fileResult.transcripts?.[0]?.text || '';
+  const sentences: any[] = fileResult.transcripts?.[0]?.sentences || [];
+  const subtitles = sentences.filter((item) => typeof item.text === 'string' && item.text.trim()).map((item, index) => ({
+    id: `asr-${Date.now()}-${index}`,
+    start: Number((Math.max(0, Number(item.begin_time) || 0) / 1000).toFixed(2)),
+    end: Number((Math.max(Number(item.begin_time) + 250, Number(item.end_time) || Number(item.begin_time) + 1000) / 1000).toFixed(2)),
+    text: item.text.trim(),
+    translation: '',
+  }));
+  if (!subtitles.length) throw new Error('没有识别到清晰语音。请确认文件中有人声，或换一个片段再试。');
+
+  job.message = '语音识别完成，正在生成逐句中文翻译…';
+  job.updatedAt = Date.now();
+  try {
+    const llm = await getLLMClientForRequest(req);
+    for (let offset = 0; offset < subtitles.length; offset += 40) {
+      const batch = subtitles.slice(offset, offset + 40);
+      const translated = await llm.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: `Translate each English subtitle into natural, concise Simplified Chinese. Preserve meaning and return only JSON: {"translations":["..."]}. Keep array order and return exactly ${batch.length} translations.\n${JSON.stringify(batch.map((item) => item.text))}`,
+        config: { responseMimeType: 'application/json', temperature: 0.2 },
+      });
+      const parsed = safeJSONParse<any>(translated.text || '{}');
+      if (Array.isArray(parsed.translations)) parsed.translations.forEach((text: any, i: number) => {
+        if (typeof text === 'string' && batch[i]) batch[i].translation = text.trim();
+      });
+    }
+  } catch (error: any) {
+    console.warn('Subtitle translation skipped:', error?.message);
+  }
+  job.status = 'completed';
+  job.message = '转写完成';
+  job.result = { transcript: transcript || subtitles.map((item) => item.text).join(' '), subtitles };
+  job.updatedAt = Date.now();
+}
 
 app.post('/api/gemini/transcribe-audio', async (req, res) => {
   try {

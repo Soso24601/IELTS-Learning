@@ -290,6 +290,7 @@ export default function MaterialsLibrary({
   const [editorTab, setEditorTab] = useState<'paste' | 'shift' | 'excel'>('excel');
   const [isExtractingCC, setIsExtractingCC] = useState(false);
   const [isTranscribingMedia, setIsTranscribingMedia] = useState(false);
+  const [transcribingMediaMessage, setTranscribingMediaMessage] = useState('正在上传音视频…');
   const [ccVideoUrl, setCcVideoUrl] = useState('');
   const [isParsingExcel, setIsParsingExcel] = useState(false);
   const mediaFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1568,8 +1569,9 @@ export default function MaterialsLibrary({
     }
 
     setIsTranscribingMedia(true);
+    setTranscribingMediaMessage('正在上传音视频…');
     try {
-      const response = await fetch('/api/gemini/transcribe-media', {
+      const response = await fetch('/api/asr/transcribe-media', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/octet-stream',
@@ -1578,8 +1580,23 @@ export default function MaterialsLibrary({
         },
         body: file,
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || '音视频转写失败');
+      const uploadResult = await response.json();
+      if (!response.ok) throw new Error(uploadResult.error || '音视频转写失败');
+      if (!uploadResult.jobId) throw new Error('服务器没有返回转写任务编号。');
+      let result: any;
+      for (let attempt = 0; attempt < 300; attempt++) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const statusResponse = await fetch(`/api/asr/transcribe-media/${encodeURIComponent(uploadResult.jobId)}`);
+        const status = await statusResponse.json();
+        if (!statusResponse.ok) throw new Error(status.error || '读取转写进度失败');
+        if (status.message) setTranscribingMediaMessage(status.message);
+        if (status.status === 'failed') throw new Error(status.error || '百炼语音识别失败');
+        if (status.status === 'completed') {
+          result = status.result;
+          break;
+        }
+      }
+      if (!result) throw new Error('语音识别等待超时，请缩短视频片段后重试。');
       if (!Array.isArray(result.subtitles) || result.subtitles.length === 0) {
         throw new Error('没有识别到可导入的语音片段。');
       }
@@ -1607,9 +1624,10 @@ export default function MaterialsLibrary({
       alert(`语音识别完成，已导入 ${importedSubtitles.length} 句字幕。可以在下方校对并保存修改。`);
     } catch (error: any) {
       console.error('Error transcribing media file:', error);
-      alert(`音视频转写失败：${error.message || '请重试或检查 Gemini API Key 配置。'}`);
+      alert(`音视频转写失败：${error.message || '请重试或检查百炼 API Key 配置。'}`);
     } finally {
       setIsTranscribingMedia(false);
+      setTranscribingMediaMessage('正在上传音视频…');
       if (mediaFileInputRef.current) mediaFileInputRef.current.value = '';
     }
   };
@@ -4846,10 +4864,10 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                       disabled={isTranscribingMedia || isExtractingCC}
                       className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-950 transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
                     >
-                      {isTranscribingMedia ? '正在上传并识别音视频，请稍候…' : '🎙️ 上传本地音频/视频并转写'}
+                      {isTranscribingMedia ? transcribingMediaMessage : '🎙️ 上传本地音频/视频并转写'}
                     </button>
                     <p className="text-[10px] text-stone-500">
-                      适用于没有字幕的内容。选择本地 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM 文件，单个文件最大 200 MB；需先配置 Gemini API Key。
+                      适用于没有字幕的内容。选择本地 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM 文件，单个文件最大 200 MB；需先在「账号与设置 → 语音识别」配置百炼 API Key。
                     </p>
 
                     <textarea

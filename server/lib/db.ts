@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
   pass_salt  TEXT NOT NULL,
   pass_hash  TEXT NOT NULL,
   llm_json   TEXT NOT NULL DEFAULT '',
+  asr_json   TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -43,6 +44,11 @@ CREATE TABLE IF NOT EXISTS user_state (
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_state_user ON user_state(user_id);
 `);
+// Additive migration for existing databases created before ASR settings existed.
+const userColumns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
+if (!userColumns.some((column) => column.name === 'asr_json')) {
+  db.exec("ALTER TABLE users ADD COLUMN asr_json TEXT NOT NULL DEFAULT ''");
+}
 
 export interface UserRow {
   id: number;
@@ -51,6 +57,7 @@ export interface UserRow {
   pass_salt: string;
   pass_hash: string;
   llm_json: string;
+  asr_json: string;
   created_at: string;
 }
 
@@ -61,6 +68,7 @@ const stmtInsertUser = db.prepare(
   'INSERT INTO users (username, email, pass_salt, pass_hash, llm_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
 );
 const stmtSetLLM = db.prepare('UPDATE users SET llm_json = ? WHERE id = ?');
+const stmtSetASR = db.prepare('UPDATE users SET asr_json = ? WHERE id = ?');
 const stmtSessionByToken = db.prepare('SELECT * FROM sessions WHERE token = ?');
 const stmtInsertSession = db.prepare(
   'INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)'
@@ -99,6 +107,10 @@ export function insertUser(opts: {
 
 export function setUserLLMJson(id: number, llmJson: string): void {
   stmtSetLLM.run(llmJson, id);
+}
+
+export function setUserASRJson(id: number, asrJson: string): void {
+  stmtSetASR.run(asrJson, id);
 }
 
 /** 持久化会话（服务重启不掉线）。返回 token。 */

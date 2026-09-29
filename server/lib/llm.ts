@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Request } from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { DATA_DIR, findUserById, setUserLLMJson } from './db';
+import { DATA_DIR, findUserById, setUserASRJson, setUserLLMJson } from './db';
 import { HttpError } from './auth';
 import { assertSafeHttpUrl, assertSafeHttpUrlSync } from './net';
 
@@ -21,6 +21,12 @@ export interface LLMConfig {
   apiKey: string;
   baseUrl: string; // openai 兼容用；gemini 忽略
   model: string; // openai 兼容模型名 / gemini 模型名
+}
+
+export interface ASRConfig {
+  provider: 'aliyun';
+  region: 'beijing' | 'singapore';
+  apiKey: string;
 }
 
 export type LLMStoreShape = {
@@ -266,6 +272,34 @@ export async function getGeminiMediaClientForRequest(req: Request): Promise<{ ai
 
 export function saveUserLLMConfig(userId: number, cfg: LLMConfig | null): void {
   setUserLLMJson(userId, cfg ? serializeLLMConfig(cfg) : '');
+}
+
+export function parseASRConfig(asrJson: string): ASRConfig | null {
+  if (!asrJson) return null;
+  try {
+    const stored = JSON.parse(asrJson) as { provider?: string; region?: string; apiKeyEnc?: string };
+    if (stored.provider !== 'aliyun' || !stored.apiKeyEnc) return null;
+    return {
+      provider: 'aliyun',
+      region: stored.region === 'singapore' ? 'singapore' : 'beijing',
+      apiKey: decryptSecret(stored.apiKeyEnc),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function saveUserASRConfig(userId: number, config: ASRConfig | null): void {
+  setUserASRJson(userId, config ? JSON.stringify({
+    provider: 'aliyun',
+    region: config.region,
+    apiKeyEnc: encryptSecret(config.apiKey),
+  }) : '');
+}
+
+export function getASRConfigForUser(userId: number): ASRConfig | null {
+  const user = findUserById(userId);
+  return user ? parseASRConfig(user.asr_json) : null;
 }
 
 /** 用给定配置发一条最小请求，验证 Key / baseUrl / model 是否可用。返回模型回复。 */

@@ -89,6 +89,17 @@ export function apiTestLLM(body: {
 }): Promise<{ ok: boolean; reply: string }> {
   return req('/api/me/llm/test', json(body));
 }
+export interface ASRSummary {
+  configured: boolean;
+  provider: 'aliyun' | null;
+  region: 'beijing' | 'singapore';
+}
+export function apiGetASR(): Promise<ASRSummary> {
+  return req('/api/me/asr');
+}
+export function apiSaveASR(body: { apiKey: string; region: 'beijing' | 'singapore' }): Promise<ASRSummary & { ok: boolean }> {
+  return req('/api/me/asr', json(body));
+}
 
 /** 把后端错误信息转成对用户友好的中文提示。 */
 export function friendlyApiError(err: any): string {

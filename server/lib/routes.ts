@@ -29,7 +29,7 @@ import {
   importState,
   upsertState,
 } from './db';
-import { LLMConfig, parseLLMConfig, saveUserLLMConfig, testLLMConfig } from './llm';
+import { LLMConfig, parseASRConfig, parseLLMConfig, saveUserASRConfig, saveUserLLMConfig, testLLMConfig } from './llm';
 import { assertSafeHttpUrlSync } from './net';
 
 const IS_JSON_KEY = /^ielts_[A-Za-z0-9_]+$/;
@@ -45,7 +45,7 @@ export function installUserSystem(app: Application): void {
   // ---- 全局 /api 门卫：/api/auth 与 /api/health 放行，其余必须登录 + 按用户限速 ----
   app.use('/api', (req, res, next) => {
     const full = (req.originalUrl || '').split('?')[0];
-    if (full === '/api/health' || full.startsWith('/api/auth')) {
+    if (full === '/api/health' || full.startsWith('/api/auth') || /^\/api\/asr\/media\/[a-f0-9]{64}$/.test(full)) {
       return next();
     }
     const uid = authedUserId(req);
@@ -263,6 +263,25 @@ function buildMeRouter(): Router {
       res.json({ ok: true, reply });
     } catch (e: any) {
       res.status(400).json({ error: e?.message || '连接失败' });
+    }
+  });
+
+  r.get('/asr', (req: Request, res: Response) => {
+    const config = parseASRConfig(findUserById(readUserId(req))?.asr_json || '');
+    res.json({ configured: !!config, provider: config?.provider || null, region: config?.region || 'beijing' });
+  });
+
+  r.post('/asr', (req: Request, res: Response) => {
+    try {
+      const uid = readUserId(req);
+      const existing = parseASRConfig(findUserById(uid)?.asr_json || '');
+      const region = req.body?.region === 'beijing' ? 'beijing' : 'singapore';
+      const apiKey = String(req.body?.apiKey || '').trim() || (existing?.region === region ? existing.apiKey : '');
+      if (!apiKey) throw new HttpError(400, '请填写阿里云百炼 API Key');
+      saveUserASRConfig(uid, { provider: 'aliyun', region, apiKey });
+      res.json({ ok: true, configured: true, provider: 'aliyun', region });
+    } catch (e) {
+      sendError(res, e, '保存语音识别配置失败');
     }
   });
 
