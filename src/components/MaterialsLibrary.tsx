@@ -1551,7 +1551,7 @@ export default function MaterialsLibrary({
       let result: any;
       for (let attempt = 0; attempt < 360; attempt++) {
         await new Promise((resolve) => window.setTimeout(resolve, 5000));
-        const statusResponse = await fetch(`/api/asr/transcribe-media/${encodeURIComponent(jobId)}`);
+        const statusResponse = await fetch(`/api/asr/transcribe-media/${encodeURIComponent(jobId)}`, { signal: AbortSignal.timeout(30000) });
         const status = await statusResponse.json();
         if (!statusResponse.ok) throw new Error(status.error || '读取转写进度失败');
         if (status.message) setTranscribingMediaMessage(status.message);
@@ -1600,6 +1600,7 @@ export default function MaterialsLibrary({
     setIsSubtitleEditorOpen(true);
     try {
       const response = await fetch('/api/asr/transcribe-youtube', {
+        signal: AbortSignal.timeout(30000),
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: activeMaterial.url }),
@@ -1609,7 +1610,7 @@ export default function MaterialsLibrary({
       if (!result.jobId) throw new Error('服务器未返回任务编号');
       await receiveTranscription(result.jobId, materialId);
     } catch (error: any) {
-      alert(error.message || 'YouTube 语音识别失败，请重试。');
+      alert(error?.name === 'TimeoutError' ? '服务器响应超时，本次等待已结束，请重试。' : error.message || 'YouTube 语音识别失败，请重试。');
     } finally {
       setIsTranscribingMedia(false);
     }
@@ -1628,11 +1629,15 @@ export default function MaterialsLibrary({
       return;
     }
     setIsTranscribingMedia(true);
-    setTranscribingMediaMessage('正在从本机获取音轨…');
+    setTranscribingMediaMessage('正在连接本机助手（最多 8 秒）…');
     setIsSubtitleEditorOpen(true);
     let localAudioStage: 'connect' | 'download' | 'transcribe' = 'connect';
     try {
+      const health = await fetch('http://127.0.0.1:18765/health', { signal: AbortSignal.timeout(8000) });
+      if (!health.ok || !(await health.json()).ok) throw new Error('本机助手健康检查失败，请重新启动助手。');
+      setTranscribingMediaMessage('正在从本机获取音轨（最长等待 12 分钟）…');
       const response = await fetch('http://127.0.0.1:18765/audio', {
+        signal: AbortSignal.timeout(12 * 60 * 1000),
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoId }),
@@ -1652,7 +1657,9 @@ export default function MaterialsLibrary({
       localAudioStage = 'transcribe';
       await handleTranscribeMediaFile(new File([blob], `youtube-audio.${extension}`, { type: mimeType }), materialId);
     } catch (error: any) {
-      const reason = error instanceof TypeError
+      const reason = error?.name === 'TimeoutError'
+        ? '本机音轨请求超时，本次等待已结束。请确认助手窗口仍在运行、浏览器允许本站访问本地网络，再重试。'
+        : error instanceof TypeError
         ? localAudioStage === 'connect'
           ? '网页无法连接本机音轨助手。请确认启动窗口保持打开，并允许 Chrome 对本站的「本地网络访问」；可打开 http://127.0.0.1:18765/health 检查助手。'
           : localAudioStage === 'download'
@@ -1693,6 +1700,7 @@ export default function MaterialsLibrary({
     setTranscribingMediaMessage('正在上传音视频…');
     try {
       const response = await fetch('/api/asr/transcribe-media', {
+        signal: AbortSignal.timeout(5 * 60 * 1000),
         method: 'POST',
         headers: {
           'Content-Type': 'application/octet-stream',
@@ -1707,7 +1715,7 @@ export default function MaterialsLibrary({
       await receiveTranscription(uploadResult.jobId, materialId, startOffset);
     } catch (error: any) {
       console.error('Error transcribing media file:', error);
-      alert(`音视频转写失败：${error.message || '请重试或检查百炼 API Key 配置。'}`);
+      alert(`音视频转写失败：${error?.name === 'TimeoutError' ? '上传或查询识别进度超时，本次等待已结束，请检查网络。' : error.message || '请重试或检查百炼 API Key 配置。'}`);
     } finally {
       setIsTranscribingMedia(false);
       setTranscribingMediaMessage('正在上传音视频…');

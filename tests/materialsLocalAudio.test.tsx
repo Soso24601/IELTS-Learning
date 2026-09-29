@@ -18,6 +18,7 @@ test('local audio becomes an uploadable File and subtitles stay on the original 
   ]);
   const alerts: string[] = [];
   let uploaded: File | undefined;
+  let healthTimeout = false;
   let tree: any;
   try {
     install('IS_REACT_ACT_ENVIRONMENT', true);
@@ -26,6 +27,11 @@ test('local audio becomes an uploadable File and subtitles stay on the original 
     install('document', { getElementById: () => null });
     install('alert', (message: string) => alerts.push(message));
     install('fetch', async (input: string, options?: RequestInit) => {
+      if (input === 'http://127.0.0.1:18765/health') {
+        assert.ok(options?.signal);
+        if (healthTimeout) throw new DOMException('Timed out', 'TimeoutError');
+        return Response.json({ ok: true });
+      }
       if (input === 'http://127.0.0.1:18765/audio') {
         assert.deepEqual(JSON.parse(String(options?.body)), { videoId: 'h2ou2A_-8JU' });
         return new Response(new Blob(['test-audio'], { type: 'audio/webm' }), { headers: { 'Content-Type': 'audio/webm' } });
@@ -51,6 +57,13 @@ test('local audio becomes an uploadable File and subtitles stay on the original 
     assert.equal(result.videoSubtitles[0].text, 'Hello there.');
     assert.equal(alerts.length, 1);
     assert.match(alerts[0], /语音识别完成/);
+    healthTimeout = true;
+    uploaded = undefined;
+    const retry = () => tree.root.findAllByType('button').find((node: any) => node.children.includes('本机快速提取音轨并识别（实验）'));
+    await act(async () => { await retry().props.onClick(); });
+    assert.equal(uploaded, undefined);
+    assert.match(alerts[1], /请求超时/);
+    assert.equal(retry().props.disabled, false, 'timeout must release the loading state');
   } finally {
     if (tree) await act(async () => { tree.unmount(); });
     for (const [name, descriptor] of original) {
