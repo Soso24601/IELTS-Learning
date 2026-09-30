@@ -35,6 +35,7 @@ import {
   EyeOff,
   Search
 } from 'lucide-react';
+import { alignSubtitleBatches, subtitleAtTime } from '../lib/subtitles';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder, MaterialType } from '../types';
 
 // --- IndexedDB for persistent audio files storage ---
@@ -286,6 +287,8 @@ export default function MaterialsLibrary({
   const [editorSubtitles, setEditorSubtitles] = useState<any[]>([]);
   const [rawSubtitlePaste, setRawSubtitlePaste] = useState('');
   const [isAligningWithAI, setIsAligningWithAI] = useState(false);
+  const [alignmentProgress, setAlignmentProgress] = useState('');
+  const alignTranscript = () => alignSubtitleBatches(rawSubtitlePaste, maxSubtitleTime || 120, (done, total) => setAlignmentProgress(`AI 分段：${done}/${total} 批`));
   const [globalTimeShift, setGlobalTimeShift] = useState(0);
   const [editorTab, setEditorTab] = useState<'paste' | 'shift' | 'excel'>('excel');
   const [isExtractingCC, setIsExtractingCC] = useState(false);
@@ -412,8 +415,11 @@ export default function MaterialsLibrary({
 
     let intervalId: any = null;
     let retries = 0;
+    let retryTimeout: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
 
     const initYtPlayer = () => {
+      if (disposed) return;
       const iframeEl = document.getElementById('youtube-iframe');
       if (window.hasOwnProperty('YT') && (window as any).YT && (window as any).YT.Player && iframeEl) {
         try {
@@ -437,41 +443,7 @@ export default function MaterialsLibrary({
                 const currTime = ytPlayerRef.current.getCurrentTime();
                 const playerState = ytPlayerRef.current.getPlayerState();
                 
-                // Only sync if currently playing or currentTime was seeked manually
-                if (playerState === 1 || Math.abs(currTime - videoCurrentTimeRef.current) > 1.5) {
-                  setVideoCurrentTime(currTime);
-                  
-                  if (isAutoSyncSubtitlesRef.current && activeMaterial.videoSubtitles) {
-                    let activeSub = activeMaterial.videoSubtitles.find(
-                      (sub: any) => currTime >= sub.start && currTime <= sub.end
-                    );
-                    
-                    if (!activeSub && activeMaterial.videoSubtitles.length > 0) {
-                      const pastSubs = activeMaterial.videoSubtitles.filter((sub: any) => sub.start <= currTime);
-                      if (pastSubs.length > 0) {
-                        activeSub = pastSubs[pastSubs.length - 1];
-                      } else {
-                        activeSub = activeMaterial.videoSubtitles[0];
-                      }
-                    }
-
-                    if (activeSub && activeSub.id !== activeSubtitleIdRef.current) {
-                      setActiveSubtitleId(activeSub.id);
-                      
-                      const subElement = document.getElementById(`sub-${activeSub.id}`);
-                      if (subElement && subtitlesContainerRef.current) {
-                        const container = subtitlesContainerRef.current;
-                        const subTop = subElement.offsetTop;
-                        const subHeight = subElement.offsetHeight;
-                        const containerHeight = container.offsetHeight;
-                        container.scrollTo({
-                          top: subTop - (containerHeight / 2) + (subHeight / 2),
-                          behavior: 'smooth'
-                        });
-                      }
-                    }
-                  }
-                }
+                setVideoCurrentTime(currTime);
               } catch (e) {
                 // ignore transient reload errors
               }
@@ -483,7 +455,7 @@ export default function MaterialsLibrary({
       } else {
         if (retries < 30) {
           retries++;
-          setTimeout(initYtPlayer, 300);
+          retryTimeout = setTimeout(initYtPlayer, 300);
         }
       }
     };
@@ -491,11 +463,26 @@ export default function MaterialsLibrary({
     const delayTimeout = setTimeout(initYtPlayer, 800);
 
     return () => {
+      disposed = true;
+      clearTimeout(retryTimeout);
       clearTimeout(delayTimeout);
       if (intervalId) clearInterval(intervalId);
       ytPlayerRef.current = null;
     };
-  }, [selectedMaterialId, activeMaterial?.url, activeMaterial]);
+  }, [selectedMaterialId, activeMaterial?.url, !!activeMaterial?.videoSubtitles?.length]);
+
+  useEffect(() => {
+    if (!isAutoSyncSubtitles) return;
+    const id = subtitleAtTime(activeMaterial?.videoSubtitles || [], videoCurrentTime);
+    setActiveSubtitleId(id);
+    if (!id || id === activeSubtitleIdRef.current) return;
+    const element = document.getElementById(`sub-${id}`);
+    const container = subtitlesContainerRef.current;
+    if (element && container) {
+      const top = element.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+      container.scrollTo({ top: Math.max(0, top - container.clientHeight / 2 + element.offsetHeight / 2), behavior: 'smooth' });
+    }
+  }, [videoCurrentTime, activeMaterial?.videoSubtitles, isAutoSyncSubtitles]);
 
   // Handle fallback simulated progress timer for non-YouTube iframe embed videos (e.g. Bilibili)
   useEffect(() => {
@@ -1811,20 +1798,12 @@ export default function MaterialsLibrary({
     localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
     setIsSubtitleEditorOpen(false);
     
-    // Refresh selected material detail
-    setTimeout(() => {
-      // Force React render sync
-      const currentId = selectedMaterialId;
-      setSelectedMaterialId(null);
-      setTimeout(() => setSelectedMaterialId(currentId), 20);
-    }, 50);
-
     alert('双语字幕编辑与对齐修改保存成功！');
   };
 
   // Synchronized formatting and parsing helpers
   const formatSubtitlesToRawText = (subs: any[]) => {
-    return subs.map(s => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.text} | ${s.translation}`).join('\n');
+    return subs.map(s => `[${s.start.toFixed(3)}-${s.end.toFixed(3)}] ${s.text} | ${s.translation}`).join('\n');
   };
 
   const parseRawTextToSubtitles = (text: string) => {
@@ -1932,32 +1911,21 @@ export default function MaterialsLibrary({
       alert('请先输入文稿或字幕文本内容。');
       return;
     }
+    setAlignmentProgress('正在准备分批处理…');
     setIsAligningWithAI(true);
     try {
-      const res = await fetch('/api/gemini/align-subtitles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rawText: rawSubtitlePaste,
-          duration: maxSubtitleTime || 120
-        })
-      });
+      const data = { subtitles: await alignTranscript() };
 
-      if (!res.ok) {
-        throw new Error('AI 对齐请求失败');
-      }
-
-      const data = await res.json();
       if (data && data.subtitles) {
         setEditorSubtitles(data.subtitles);
         setRawSubtitlePaste(formatSubtitlesToRawText(data.subtitles));
-        alert('AI 智能字幕对齐与学术分段成功！已将原文智能重构并切分为双语段落，您可以在下方的预览表格中微调每句的起止时间、翻译或直接保存。');
+        alert('AI 智能字幕对齐与学术分段成功！已将原文智能重构并切分为双语段落，已保留已有字幕时间范围；句内拆分时间为估算，请校对后点击“保存修改并关闭”。');
       } else {
         throw new Error('返回的字幕格式无效');
       }
     } catch (err: any) {
       console.error(err);
-      alert('AI 字幕对齐失败: ' + err.message);
+      alert('AI 字幕分段失败：' + (err?.name === 'TimeoutError' ? '本批处理超过 2 分钟，原字幕未修改，请稍后重试。' : err.message));
     } finally {
       setIsAligningWithAI(false);
     }
@@ -2114,44 +2082,6 @@ export default function MaterialsLibrary({
     const currentTime = videoRef.current.currentTime;
     setVideoCurrentTime(currentTime);
 
-    if (isAutoSyncSubtitlesRef.current) {
-      // Scan subtitle blocks to match current time
-      let activeSub = activeMaterial.videoSubtitles.find(
-        sub => currentTime >= sub.start && currentTime <= sub.end
-      );
-
-      // Robust closest subtitle fallback to handle gaps or slight synchronization offsets
-      if (!activeSub && activeMaterial.videoSubtitles.length > 0) {
-        const pastSubs = activeMaterial.videoSubtitles.filter(sub => sub.start <= currentTime);
-        if (pastSubs.length > 0) {
-          activeSub = pastSubs[pastSubs.length - 1]; // Closest previous subtitle
-        } else {
-          activeSub = activeMaterial.videoSubtitles[0]; // First subtitle fallback
-        }
-      }
-
-      if (activeSub) {
-        if (activeSub.id !== activeSubtitleIdRef.current) {
-          setActiveSubtitleId(activeSub.id);
-          
-          // Auto-scroll the subtitle into view smoothly
-          const subElement = document.getElementById(`sub-${activeSub.id}`);
-          if (subElement && subtitlesContainerRef.current) {
-            const container = subtitlesContainerRef.current;
-            const subTop = subElement.offsetTop;
-            const subHeight = subElement.offsetHeight;
-            const containerHeight = container.offsetHeight;
-            
-            container.scrollTo({
-              top: subTop - (containerHeight / 2) + (subHeight / 2),
-              behavior: 'smooth'
-            });
-          }
-        }
-      } else {
-        setActiveSubtitleId(null);
-      }
-    }
   };
 
   // Jump video directly to selected subtitle sentence
@@ -3634,20 +3564,8 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                   }
                                   setIsAligningWithAI(true);
                                   try {
-                                    const res = await fetch('/api/gemini/align-subtitles', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({
-                                        rawText: rawSubtitlePaste,
-                                        duration: maxSubtitleTime || 120
-                                      })
-                                    });
+                                    const data = { subtitles: await alignTranscript() };
 
-                                    if (!res.ok) {
-                                      throw new Error('AI 对齐请求失败');
-                                    }
-
-                                    const data = await res.json();
                                     if (data && data.subtitles) {
                                       const sortedSubtitles = [...data.subtitles]
                                         .filter((s: any) => s.text && s.text.trim().length > 0)
@@ -3673,19 +3591,13 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                       setMaterials(updatedMaterials);
                                       localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
                                       
-                                      setTimeout(() => {
-                                        const currentId = selectedMaterialId;
-                                        setSelectedMaterialId(null);
-                                        setTimeout(() => setSelectedMaterialId(currentId), 20);
-                                      }, 50);
-
                                       alert('✨ AI 智能分段并双语对照生成成功！已为您开启精听影子训练系统。');
                                     } else {
                                       throw new Error('返回的字幕格式无效');
                                     }
                                   } catch (err: any) {
                                     console.error(err);
-                                    alert('AI 字幕对齐分段失败: ' + err.message);
+                                    alert('AI 字幕分段失败：' + (err?.name === 'TimeoutError' ? '本批处理超过 2 分钟，原字幕未修改，请稍后重试。' : err.message));
                                   } finally {
                                     setIsAligningWithAI(false);
                                   }
@@ -3696,7 +3608,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                 {isAligningWithAI ? (
                                   <>
                                     <span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-amber-950 border-t-transparent"></span>
-                                    <span>AI 正在智能分析、断句并生成翻译中 (可能需要 10s-15s)...</span>
+                                    <span>{alignmentProgress || '正在准备分批处理…'}</span>
                                   </>
                                 ) : (
                                   <>
@@ -5105,7 +5017,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                         {isAligningWithAI ? (
                           <>
                             <span className="animate-spin rounded-full h-3 w-3 border-2 border-amber-800 border-t-transparent"></span>
-                            AI 正在智能断句、翻译并连续对齐时间轴中...
+                            {alignmentProgress || '正在准备分批处理…'}
                           </>
                         ) : (
                           <>
