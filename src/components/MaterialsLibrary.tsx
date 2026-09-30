@@ -247,6 +247,7 @@ export default function MaterialsLibrary({
   const [crawlNotice, setCrawlNotice] = useState<string>('');
   const [activeSubtitleId, setActiveSubtitleId] = useState<string | null>(null);
   const [isAutoSyncSubtitles, setIsAutoSyncSubtitles] = useState<boolean>(true);
+  const [youtubeSyncStatus, setYoutubeSyncStatus] = useState<'connecting' | 'ready' | 'unavailable'>('connecting');
   
   const videoCurrentTimeRef = useRef<number>(0);
   const activeSubtitleIdRef = useRef<string | null>(null);
@@ -341,6 +342,7 @@ export default function MaterialsLibrary({
           start: String(Math.floor(seekTime)),
           autoplay: autoplay ? '1' : '0',
           enablejsapi: '1',
+          origin: window.location.origin,
           cc_load_policy: '0',
           controls: '1',
           modestbranding: '1',
@@ -404,6 +406,7 @@ export default function MaterialsLibrary({
     if (!activeMaterial || !isEmbedUrl(activeMaterial.url)) return;
     const isYouTube = activeMaterial.url.includes('youtube') || activeMaterial.url.includes('youtu.be');
     if (!isYouTube) return;
+    setYoutubeSyncStatus('connecting');
 
     // Load YouTube API script globally if not already loaded
     if (!window.hasOwnProperty('YT')) {
@@ -425,6 +428,13 @@ export default function MaterialsLibrary({
         try {
           ytPlayerRef.current = new (window as any).YT.Player('youtube-iframe', {
             events: {
+              onReady: () => {
+                if (disposed) return;
+                setYoutubeSyncStatus('ready');
+              },
+              onError: () => {
+                if (!disposed) setYoutubeSyncStatus('unavailable');
+              },
               onStateChange: (event: any) => {
                 // YT.PlayerState.PLAYING is 1, PAUSED is 2, ENDED is 0
                 if (event.data === 1) {
@@ -441,21 +451,22 @@ export default function MaterialsLibrary({
             if (ytPlayerRef.current && typeof ytPlayerRef.current.getCurrentTime === 'function') {
               try {
                 const currTime = ytPlayerRef.current.getCurrentTime();
-                const playerState = ytPlayerRef.current.getPlayerState();
-                
-                setVideoCurrentTime(currTime);
+                if (Number.isFinite(currTime)) setVideoCurrentTime(currTime);
               } catch (e) {
-                // ignore transient reload errors
+                // Player may not be ready yet; onReady reports the connection state.
               }
             }
           }, 250);
         } catch (err) {
           console.warn("YouTube player init failed:", err);
+          if (!disposed) setYoutubeSyncStatus('unavailable');
         }
       } else {
-        if (retries < 30) {
+        if (retries < 100) {
           retries++;
           retryTimeout = setTimeout(initYtPlayer, 300);
+        } else {
+          setYoutubeSyncStatus('unavailable');
         }
       }
     };
@@ -3782,6 +3793,11 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                               </div>
                             )}
                           </div>
+                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
+                            <p role="status" className={`text-xs px-3 py-2 rounded-lg ${youtubeSyncStatus === 'ready' ? 'bg-emerald-50 text-emerald-800' : youtubeSyncStatus === 'unavailable' ? 'bg-amber-50 text-amber-900' : 'bg-stone-100 text-stone-600'}`}>
+                              {youtubeSyncStatus === 'ready' ? '字幕已连接视频时间轴；播放或拖动进度时，当前句会高亮。' : youtubeSyncStatus === 'unavailable' ? '未能连接 YouTube 播放器时间轴，暂时无法自动高亮。请刷新页面并确认视频可播放。' : '正在连接 YouTube 播放器时间轴…'}
+                            </p>
+                          )}
 
                           {/* Bilingual Subtitle scrolling viewport */}
                           <div className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-3">
@@ -3905,7 +3921,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                       onClick={() => handleSubtitleClick(sub.start, sub.id)}
                                       className={`p-3.5 border rounded-xl transition-all duration-200 text-left group/sub cursor-pointer relative ${
                                         isActive 
-                                          ? 'bg-amber-50/70 border-amber-300 ring-2 ring-amber-400/20 shadow-xs scale-[1.005]' 
+                                          ? 'bg-amber-100 border-amber-500 ring-2 ring-amber-500 shadow-md scale-[1.005]'
                                           : 'bg-stone-50/50 border-stone-200/50 hover:bg-stone-100/60'
                                       }`}
                                     >

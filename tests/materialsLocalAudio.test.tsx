@@ -23,7 +23,7 @@ test('local audio becomes an uploadable File and subtitles stay on the original 
   try {
     install('IS_REACT_ACT_ENVIRONMENT', true);
     install('localStorage', { getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value) });
-    install('window', { YT: {}, speechSynthesis: { getVoices: () => [] }, setTimeout: (fn: () => void) => setTimeout(fn, 0) });
+    install('window', { location: { origin: 'https://ielts.grincaq.info' }, YT: {}, speechSynthesis: { getVoices: () => [] }, setTimeout: (fn: () => void) => setTimeout(fn, 0) });
     install('document', { getElementById: () => null });
     install('alert', (message: string) => alerts.push(message));
     install('fetch', async (input: string, options?: RequestInit) => {
