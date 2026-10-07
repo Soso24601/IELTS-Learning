@@ -17,6 +17,8 @@ import { installUserSystem } from './server/lib/routes';
 import { getASRConfigForUser, getLLMClientForRequest } from './server/lib/llm';
 import { assertSafeHttpUrl } from './server/lib/net';
 import { downloadYoutubeAudio, youtubeVideoId } from './server/lib/youtubeAudio';
+import { splitAudio, parallelTranscribe, type ASRResult } from './server/lib/parallelAsr';
+import { transcribeQwenFile } from './server/lib/qwenAsr';
 import { createServer as createViteServer } from 'vite';
 import { createRequire } from 'module';
 import * as XLSX from 'xlsx';
@@ -39,6 +41,7 @@ type TranscriptionJob = {
   updatedAt: number;
 };
 const transcriptionJobs = new Map<string, TranscriptionJob>();
+const activeASRUploads = new Set<number>();
 const temporaryMedia = new Map<string, { path: string; mimeType: string }>();
 
 app.get('/api/asr/media/:token', (req, res) => {
@@ -959,10 +962,10 @@ app.post('/api/asr/transcribe-youtube', (req, res) => {
     id = youtubeVideoId(String(req.body?.url || ''));
     origin = transcriptionOrigin(req);
   } catch (error: any) { return res.status(400).json({ error: error.message || '视频链接或网站地址无效。' }); }
-  if ([...transcriptionJobs.values()].some(job => job.ownerId === ownerId && job.status === 'processing')) {
+  if (activeASRUploads.has(ownerId) || [...transcriptionJobs.values()].some(job => job.ownerId === ownerId && job.status === 'processing')) {
     return res.status(409).json({ error: '已有转写任务正在处理，请等待完成后再试。' });
   }
-  if ([...transcriptionJobs.values()].filter(job => job.status === 'processing').length >= 2) {
+  if (activeASRUploads.size + [...transcriptionJobs.values()].filter(job => job.status === 'processing').length >= 2) {
     return res.status(429).json({ error: '服务器正在处理其他音视频，请稍后再试。' });
   }
   const jobId = randomUUID();
@@ -992,6 +995,7 @@ app.post('/api/asr/transcribe-youtube', (req, res) => {
 
 // Upload media to a private temporary file, then submit an async Alibaba Cloud Qwen ASR task.
 app.post('/api/asr/transcribe-media', async (req, res) => {
+  if (!['standard', 'parallel', 'benchmark'].includes(req.header('x-asr-mode') || 'standard')) return res.status(400).json({ error: '识别模式无效。' });
   const maxBytes = 200 * 1024 * 1024;
   const mimeType = String(req.header('x-media-mime-type') || '').toLowerCase().split(';')[0].trim();
   const allowedMimeTypes = new Set([
@@ -1022,6 +1026,9 @@ app.post('/api/asr/transcribe-media', async (req, res) => {
     'video/mpg': '.mpg', 'video/webm': '.webm', 'video/wmv': '.wmv', 'video/x-flv': '.flv',
   };
   const temporaryPath = path.join(tmpdir(), `ielts-asr-${randomUUID()}${extensionByMime[mimeType]}`);
+  if (activeASRUploads.has(ownerId) || [...transcriptionJobs.values()].some(job => job.ownerId === ownerId && job.status === 'processing')) return res.status(409).json({ error: '已有完整音轨正在识别，请等待完成。' });
+  if (activeASRUploads.size + [...transcriptionJobs.values()].filter(job => job.status === 'processing').length >= 2) return res.status(429).json({ error: '服务器正在处理其他音轨，请稍后再试。' });
+  activeASRUploads.add(ownerId);
   try {
     let receivedBytes = 0;
     const sizeGuard = new Transform({
@@ -1039,6 +1046,7 @@ app.post('/api/asr/transcribe-media', async (req, res) => {
     const jobId = randomUUID();
     temporaryMedia.set(token, { path: temporaryPath, mimeType });
     transcriptionJobs.set(jobId, { ownerId, status: 'processing', message: '正在提交百炼语音识别任务…', updatedAt: Date.now() });
+    activeASRUploads.delete(ownerId);
     res.status(202).json({ jobId });
 
     void runAlibabaTranscription(jobId, token, publicOrigin, config, req).catch((error: any) => {
@@ -1055,6 +1063,7 @@ app.post('/api/asr/transcribe-media', async (req, res) => {
       setTimeout(() => transcriptionJobs.delete(jobId), 10 * 60 * 1000).unref();
     });
   } catch (error: any) {
+    activeASRUploads.delete(ownerId);
     await unlink(temporaryPath).catch(() => undefined);
     console.error('Error uploading media for Alibaba ASR:', error);
     return res.status(error.status || 500).json({ error: error.message || '音视频上传失败，请重试。' });
@@ -1075,50 +1084,62 @@ async function runAlibabaTranscription(
   req: express.Request,
 ) {
   const job = transcriptionJobs.get(jobId)!;
-  const baseUrl = config.region === 'beijing' ? 'https://dashscope.aliyuncs.com/api/v1' : 'https://dashscope-intl.aliyuncs.com/api/v1';
-  const headers = { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' };
+  const mode = req.header('x-asr-mode') || 'standard';
+  const totalStarted = Date.now();
+  let timingNote = '';
+  let result: ASRResult;
   const mediaUrl = `${publicOrigin}/api/asr/media/${token}`;
-  const submit = await fetch(`${baseUrl}/services/audio/asr/transcription`, {
-    method: 'POST',
-    signal: AbortSignal.timeout(30000),
-    headers: { ...headers, 'X-DashScope-Async': 'enable' },
-    body: JSON.stringify({ model: 'qwen3-asr-flash-filetrans', input: { file_url: mediaUrl }, parameters: { channel_id: [0], enable_itn: false, enable_words: false } }),
-  });
-  const submitData: any = await submit.json().catch(() => ({}));
-  if (!submit.ok || !submitData.output?.task_id) throw new Error(submitData.message || submitData.code || `百炼提交任务失败（HTTP ${submit.status}），请确认 API Key 地域和账户权限。`);
-  job.message = '百炼正在识别音视频…';
-  job.updatedAt = Date.now();
-
-  let taskData: any;
-  for (let attempt = 0; attempt < 300; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const poll = await fetch(`${baseUrl}/tasks/${encodeURIComponent(submitData.output.task_id)}`, { headers, signal: AbortSignal.timeout(30000) });
-    taskData = await poll.json().catch(() => ({}));
-    if (!poll.ok) throw new Error(taskData.message || taskData.code || `查询百炼任务失败（HTTP ${poll.status}）。`);
-    const status = taskData.output?.task_status;
-    if (status === 'SUCCEEDED') break;
-    if (status === 'FAILED' || status === 'UNKNOWN') throw new Error(taskData.output?.message || taskData.message || `百炼识别任务${status === 'FAILED' ? '失败' : '已失效'}。`);
-    job.updatedAt = Date.now();
+  const benchmarkStarted = Date.now();
+  let baseline: ASRResult | undefined;
+  let baselineMs = 0;
+  if (mode === 'benchmark') {
+    job.message = '耗时对比 1/2：正在整条识别完整音轨…';
+    baseline = await transcribeQwenFile(mediaUrl, config);
+    baselineMs = Date.now() - benchmarkStarted;
   }
-  if (taskData?.output?.task_status !== 'SUCCEEDED') throw new Error('语音识别等待超时，请缩短视频片段后重试。');
-  const resultUrl = taskData.output?.result?.transcription_url;
-  if (!resultUrl) throw new Error('百炼任务已完成，但没有返回识别结果地址。');
-  const safeResultUrl = new URL(resultUrl);
-  if (!safeResultUrl.hostname.endsWith('.aliyuncs.com')) throw new Error('百炼返回了无法验证的结果地址。');
-  safeResultUrl.protocol = 'https:';
-  const fileResultResponse = await fetch(safeResultUrl, { signal: AbortSignal.timeout(30000), redirect: 'error' });
-  if (!fileResultResponse.ok) throw new Error(`下载百炼识别结果失败（HTTP ${fileResultResponse.status}）。`);
-  const fileResult: any = await fileResultResponse.json();
-  const transcript = fileResult.transcripts?.[0]?.text || '';
-  const sentences: any[] = fileResult.transcripts?.[0]?.sentences || [];
-  const subtitles = sentences.filter((item) => typeof item.text === 'string' && item.text.trim()).map((item, index) => ({
-    id: `asr-${Date.now()}-${index}`,
-    start: Number((Math.max(0, Number(item.begin_time) || 0) / 1000).toFixed(2)),
-    end: Number((Math.max(Number(item.begin_time) + 250, Number(item.end_time) || Number(item.begin_time) + 1000) / 1000).toFixed(2)),
-    text: item.text.trim(),
-    translation: '',
-  }));
-  if (!subtitles.length) throw new Error('没有识别到清晰语音。请确认文件中有人声，或换一个片段再试。');
+  if (mode === 'parallel' || mode === 'benchmark') {
+    const source = temporaryMedia.get(token);
+    if (!source) throw new Error('音轨已过期，请重新上传。');
+    const directory = await mkdtemp(path.join(tmpdir(), 'ielts-asr-parts-'));
+    const partTokens: string[] = [];
+    const parallelStarted = Date.now();
+    try {
+      job.message = '正在切分完整音轨，稍后自动合并全部字幕…';
+      const parts = await splitAudio(source.path, directory);
+      const splitMs = Date.now() - parallelStarted;
+      job.message = `正在并行识别完整音轨：0/${parts.length} 段完成…`;
+      result = await parallelTranscribe(parts, async (part) => {
+        const partToken = randomBytes(32).toString('hex');
+        partTokens.push(partToken);
+        temporaryMedia.set(partToken, { path: part.path, mimeType: 'audio/flac' });
+        return transcribeQwenFile(`${publicOrigin}/api/asr/media/${partToken}`, config, parallelStarted + 15 * 60 * 1000);
+      }, (done, total) => {
+        job.message = `正在并行识别完整音轨：${done}/${total} 段完成…`;
+        job.updatedAt = Date.now();
+      });
+      const parallelMs = Date.now() - parallelStarted;
+      timingNote = `分段 ${parts.length} 个，最多 3 个同时识别；切分 ${(splitMs / 1000).toFixed(1)} 秒，并行流程共 ${(parallelMs / 1000).toFixed(1)} 秒。`;
+      if (baseline) {
+        const baselineWords = baseline.transcript.trim().split(/\s+/).length;
+        const parallelWords = result.transcript.trim().split(/\s+/).length;
+        timingNote = `完整音轨耗时对比：整条识别 ${(baselineMs / 1000).toFixed(1)} 秒；${timingNote}整条/并行输出词数：${baselineWords}/${parallelWords}（需人工校对切分处）。以上不含原音轨下载、上传和中文翻译。`;
+      }
+    } catch (error: any) {
+      if (!baseline) throw error;
+      result = baseline;
+      timingNote = `并行对比未完成，已保留整条识别的完整结果（${(baselineMs / 1000).toFixed(1)} 秒）。原因：${error?.code === 'ENOENT' ? '服务器缺少音频切分工具' : error?.message || '分段识别失败'}。`;
+    } finally {
+      for (const partToken of partTokens) temporaryMedia.delete(partToken);
+      await rm(directory, { recursive: true, force: true });
+    }
+  } else {
+    job.message = '百炼正在识别完整音视频…';
+    result = await transcribeQwenFile(mediaUrl, config);
+    timingNote = `英文识别耗时 ${((Date.now() - totalStarted) / 1000).toFixed(1)} 秒（不含下载、上传和中文翻译）。`;
+  }
+  const { transcript, subtitles } = result;
+  if (!subtitles.length) throw new Error('没有识别到清晰语音。请确认音轨中有人声。');
+  const translationStarted = Date.now();
 
   job.message = '语音识别完成，正在生成逐句中文翻译…';
   job.updatedAt = Date.now();
@@ -1148,7 +1169,7 @@ async function runAlibabaTranscription(
   job.status = 'completed';
   job.message = '转写完成';
   job.result = { transcript: transcript || subtitles.map((item) => item.text).join(' '), subtitles,
-    warning: subtitles.some(item => !item.translation) ? '英文和时间轴已保存；部分中文翻译未完成，可稍后在字幕面板继续翻译。' : undefined };
+    warning: `${timingNote} 翻译阶段耗时 ${((Date.now() - translationStarted) / 1000).toFixed(1)} 秒。${subtitles.some(item => !item.translation) ? '部分中文翻译未完成，可稍后继续翻译。' : ''}` };
   job.updatedAt = Date.now();
 }
 

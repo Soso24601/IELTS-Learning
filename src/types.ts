@@ -28,6 +28,7 @@ export interface IELTSWord {
 export type MaterialType = 'audio' | 'document' | 'video' | 'link';
 
 export interface StudyMaterial {
+  transcriptionReport?: string;
   id: string;
   name: string;
   type: MaterialType;

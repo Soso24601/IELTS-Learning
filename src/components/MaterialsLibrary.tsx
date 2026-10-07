@@ -294,6 +294,19 @@ export default function MaterialsLibrary({
   const [editorTab, setEditorTab] = useState<'paste' | 'shift' | 'excel'>('excel');
   const [isExtractingCC, setIsExtractingCC] = useState(false);
   const [isTranscribingMedia, setIsTranscribingMedia] = useState(false);
+  const [asrMode, setAsrMode] = useState<'standard' | 'parallel' | 'benchmark'>('standard');
+  const renderASROptions = () => (
+    <label className="block text-xs text-stone-600 space-y-1">
+      <span>完整字幕识别方式</span>
+      <select aria-label="完整字幕识别方式" value={asrMode} disabled={isTranscribingMedia}
+        onChange={e => setAsrMode(e.target.value as typeof asrMode)} className="block w-full rounded-lg border border-stone-300 p-2 bg-white">
+        <option value="standard">整条识别</option>
+        <option value="parallel">并行识别完整音轨（实验）</option>
+        <option value="benchmark">对比两种方式耗时（会识别两次，按用量计费）</option>
+      </select>
+      {asrMode !== 'standard' && <span className="block">仍会一次交付完整字幕。分段交界处需校对；尚未保证一定更快。</span>}
+    </label>
+  );
   const [transcribingMediaMessage, setTranscribingMediaMessage] = useState('正在上传音视频…');
   const [ccVideoUrl, setCcVideoUrl] = useState('');
   const [isParsingExcel, setIsParsingExcel] = useState(false);
@@ -1545,7 +1558,7 @@ export default function MaterialsLibrary({
     }
   };
 
-  const receiveTranscription = async (jobId: string, materialId: string, startOffset = 0) => {
+  const receiveTranscription = async (jobId: string, materialId: string, startOffset = 0, clientTiming = '') => {
       let result: any;
       for (let attempt = 0; attempt < 360; attempt++) {
         await new Promise((resolve) => window.setTimeout(resolve, 5000));
@@ -1577,6 +1590,7 @@ export default function MaterialsLibrary({
           ...material,
           content: result.transcript || importedSubtitles.map((subtitle: any) => subtitle.text).join(' '),
           videoSubtitles: importedSubtitles,
+          transcriptionReport: clientTiming + (result.warning || ''),
           sentences: importedSubtitles.map((subtitle: any) => subtitle.text),
         } : material);
         localStorage.setItem('ielts_material_files', JSON.stringify(updated));
@@ -1586,7 +1600,7 @@ export default function MaterialsLibrary({
       setIsSubtitleEditorOpen(true);
       setEditorSubtitles(importedSubtitles);
       setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
-      alert(`语音识别完成，已导入 ${importedSubtitles.length} 句字幕。${result.warning || '可以在下方校对并保存修改。'}`);
+      alert(`语音识别完成，已导入 ${importedSubtitles.length} 句字幕。${clientTiming}${result.warning || '可以在下方校对并保存修改。'}`);
   };
 
   const handleTranscribeYouTube = async () => {
@@ -1597,10 +1611,22 @@ export default function MaterialsLibrary({
     setCcVideoUrl(activeMaterial.url || '');
     setIsSubtitleEditorOpen(true);
     try {
+      // Prefer a locally running yt-dlp helper: it can read YouTube from the user's
+      // network and avoids waiting for a cloud-hosted request that YouTube may block.
+      try {
+        const localHealth = await fetch('http://127.0.0.1:18765/health', { signal: AbortSignal.timeout(2000) });
+        if (localHealth.ok && (await localHealth.json()).ok) {
+          setTranscribingMediaMessage('检测到本机助手，正在提取完整音轨（无需录屏）…');
+          await handleTranscribeYouTubeLocally();
+          return;
+        }
+      } catch {
+        // The helper is optional. Continue with the cloud path when it is not reachable.
+      }
       const response = await fetch('/api/asr/transcribe-youtube', {
         signal: AbortSignal.timeout(30000),
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-ASR-Mode': asrMode },
         body: JSON.stringify({ url: activeMaterial.url }),
       });
       const result = await response.json();
@@ -1608,7 +1634,14 @@ export default function MaterialsLibrary({
       if (!result.jobId) throw new Error('服务器未返回任务编号');
       await receiveTranscription(result.jobId, materialId);
     } catch (error: any) {
-      alert(error?.name === 'TimeoutError' ? '服务器响应超时，本次等待已结束，请重试。' : error.message || 'YouTube 语音识别失败，请重试。');
+      const message = String(error?.message || '');
+      const serverCannotFetchAudio = /YouTube 要求服务器登录|YouTube 音轨地址向服务器返回 403|YouTube 暂时限制了服务器|服务器无法获取 YouTube 音轨|获取 YouTube 音轨超时/i.test(message);
+      if (serverCannotFetchAudio) {
+        setTranscribingMediaMessage('服务器无法读取此视频，正在切换到本机提取完整音轨…');
+        await handleTranscribeYouTubeLocally();
+        return;
+      }
+      alert(error?.name === 'TimeoutError' ? '服务器响应超时，本次等待已结束，请重试。' : message || 'YouTube 语音识别失败，请重试。');
     } finally {
       setIsTranscribingMedia(false);
     }
@@ -1629,6 +1662,7 @@ export default function MaterialsLibrary({
     setIsTranscribingMedia(true);
     setTranscribingMediaMessage('正在连接本机助手（最多 8 秒）…');
     setIsSubtitleEditorOpen(true);
+    const downloadStarted = performance.now();
     let localAudioStage: 'connect' | 'download' | 'transcribe' = 'connect';
     try {
       const health = await fetch('http://127.0.0.1:18765/health', { signal: AbortSignal.timeout(8000) });
@@ -1653,7 +1687,7 @@ export default function MaterialsLibrary({
       const blob = await response.blob();
       if (!blob.size) throw new Error('本机助手返回了空音轨。');
       localAudioStage = 'transcribe';
-      await handleTranscribeMediaFile(new File([blob], `youtube-audio.${extension}`, { type: mimeType }), materialId);
+      await handleTranscribeMediaFile(new File([blob], `youtube-audio.${extension}`, { type: mimeType }), materialId, 0, performance.now() - downloadStarted);
     } catch (error: any) {
       const reason = error?.name === 'TimeoutError'
         ? '本机音轨请求超时，本次等待已结束。请确认助手窗口仍在运行、浏览器允许本站访问本地网络，再重试。'
@@ -1670,7 +1704,7 @@ export default function MaterialsLibrary({
     }
   };
 
-  const handleTranscribeMediaFile = async (file: File, materialId = activeMaterial?.id, startOffset = 0) => {
+  const handleTranscribeMediaFile = async (file: File, materialId = activeMaterial?.id, startOffset = 0, downloadMs = 0) => {
     if (!materialId) return;
     const extension = file.name.split('.').pop()?.toLowerCase() || '';
     const mimeByExtension: Record<string, string> = {
@@ -1696,6 +1730,7 @@ export default function MaterialsLibrary({
 
     setIsTranscribingMedia(true);
     setTranscribingMediaMessage('正在上传音视频…');
+    const uploadStarted = performance.now();
     try {
       const response = await fetch('/api/asr/transcribe-media', {
         signal: AbortSignal.timeout(5 * 60 * 1000),
@@ -1703,6 +1738,7 @@ export default function MaterialsLibrary({
         headers: {
           'Content-Type': 'application/octet-stream',
           'X-Media-Mime-Type': mimeType,
+          'X-ASR-Mode': asrMode,
           'X-Media-Name': encodeURIComponent(file.name),
         },
         body: file,
@@ -1710,7 +1746,7 @@ export default function MaterialsLibrary({
       const uploadResult = await response.json();
       if (!response.ok) throw new Error(uploadResult.error || '音视频转写失败');
       if (!uploadResult.jobId) throw new Error('服务器没有返回转写任务编号。');
-      await receiveTranscription(uploadResult.jobId, materialId, startOffset);
+      await receiveTranscription(uploadResult.jobId, materialId, startOffset, `${downloadMs ? `本机获取音轨 ${(downloadMs / 1000).toFixed(1)} 秒；` : ''}上传 ${((performance.now() - uploadStarted) / 1000).toFixed(1)} 秒。`);
     } catch (error: any) {
       console.error('Error transcribing media file:', error);
       alert(`音视频转写失败：${error?.name === 'TimeoutError' ? '上传或查询识别进度超时，本次等待已结束，请检查网络。' : error.message || '请重试或检查百炼 API Key 配置。'}`);
@@ -3437,30 +3473,34 @@ export default function MaterialsLibrary({
                             <button type="button" onClick={() => void handleTranscribeYouTube()}
                               disabled={isTranscribingMedia || isExtractingCC}
                               className="w-full py-3 px-4 bg-amber-400 hover:bg-amber-500 disabled:bg-stone-300 text-stone-900 rounded-xl text-sm font-bold transition">
-                              {isTranscribingMedia ? transcribingMediaMessage : '识别 YouTube 视频语音（百炼）'}
+                                {isTranscribingMedia ? transcribingMediaMessage : '完整提取并识别字幕（无需录屏）'}
                             </button>
                           )}
 
                           {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
                             <div className="space-y-1.5">
+                              {renderASROptions()}
                               <button type="button" onClick={() => void handleTranscribeYouTubeLocally()}
                                 disabled={isTranscribingMedia || isExtractingCC}
                                 className="w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-950 hover:bg-emerald-100 disabled:opacity-60">
-                                {isTranscribingMedia ? transcribingMediaMessage : '本机快速提取音轨并识别（实验）'}
+                                {isTranscribingMedia ? transcribingMediaMessage : '本机提取完整音轨并识别（无需录屏）'}
                               </button>
-                              <p className="text-[11px] text-stone-500">需先在电脑上启动本机音轨助手，并保持启动窗口打开。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装说明</a> · <a className="underline" href="http://127.0.0.1:18765/health" target="_blank" rel="noreferrer">检查助手是否运行</a></p>
+                              <p className="text-[11px] text-stone-500">整条下载视频音轨后交给百炼识别，不需要播放或录屏。手动启动时需先在电脑上运行本机音轨助手并保持窗口打开。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装说明</a> · <a className="underline" href="http://127.0.0.1:18765/health" target="_blank" rel="noreferrer">检查助手是否运行</a></p>
                             </div>
                           )}
 
                           {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
-                            <div className="space-y-1.5">
-                              <button type="button" onClick={() => void startTabAudioRecording()}
-                                disabled={isRecordingTabAudio || isTranscribingMedia}
-                                className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-950 hover:bg-amber-100 disabled:opacity-60">
-                                {isRecordingTabAudio ? '正在录制标签页音频…' : '服务器获取失败？录制播放中的标签页音频'}
-                              </button>
-                              <p className="text-[11px] leading-relaxed text-stone-500">选择播放视频的 Chrome 标签页并勾选“分享标签页音频”，然后播放视频；录完点右下角“结束录制并识别”。字幕会导入当前视频，录制需要与播放等长。</p>
-                            </div>
+                            <details className="rounded-xl border border-stone-200 px-3 py-2">
+                              <summary className="cursor-pointer text-xs font-semibold text-stone-600">备用方式：实时录制标签页音频</summary>
+                              <div className="mt-2 space-y-1.5">
+                                <button type="button" onClick={() => void startTabAudioRecording()}
+                                  disabled={isRecordingTabAudio || isTranscribingMedia}
+                                  className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-950 hover:bg-amber-100 disabled:opacity-60">
+                                  {isRecordingTabAudio ? '正在录制标签页音频…' : '录制播放中的标签页音频'}
+                                </button>
+                                <p className="text-[11px] leading-relaxed text-stone-500">选择播放视频的 Chrome 标签页并勾选“分享标签页音频”，录制时长与视频播放时长相同。</p>
+                              </div>
+                            </details>
                           )}
 
                           {/* 无字幕时也内嵌原视频，让用户先看到真实视频 */}
@@ -3798,6 +3838,11 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                               {youtubeSyncStatus === 'ready' ? '字幕已连接视频时间轴；播放或拖动进度时，当前句会高亮。' : youtubeSyncStatus === 'unavailable' ? '未能连接 YouTube 播放器时间轴，暂时无法自动高亮。请刷新页面并确认视频可播放。' : '正在连接 YouTube 播放器时间轴…'}
                             </p>
                           )}
+
+                          {activeMaterial.transcriptionReport && <details className="text-xs text-stone-600 bg-stone-50 rounded-lg p-3">
+                            <summary className="cursor-pointer font-semibold">完整字幕处理耗时</summary>
+                            <p className="mt-2 leading-relaxed">{activeMaterial.transcriptionReport}</p>
+                          </details>}
 
                           {/* Bilingual Subtitle scrolling viewport */}
                           <div className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-3">
@@ -4968,23 +5013,29 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                         <button type="button" onClick={() => void handleTranscribeYouTube()}
                           disabled={isTranscribingMedia || isExtractingCC}
                           className="w-full rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-bold text-stone-900 hover:bg-amber-500 disabled:opacity-60">
-                          {isTranscribingMedia ? transcribingMediaMessage : '识别 YouTube 视频语音（百炼）'}
+                          {isTranscribingMedia ? transcribingMediaMessage : '完整提取并识别字幕（无需录屏）'}
                         </button>
                         <p className="text-[11px] text-stone-500">
-                          无需官方字幕。获取音轨后由百炼识别并导入本视频的文字稿，按百炼用量计费。请保持页面打开；视频最长 3 小时、音轨最大 200 MB。
+                          无需官方字幕。先检查本机助手：已启动时直接下载整条音轨；否则尝试云端获取，若 YouTube 拦截服务器会自动改用本机助手。音轨由百炼识别并导入；请保持页面打开，视频最长 3 小时、音轨最大 200 MB。
                         </p>
-                        <button type="button" onClick={() => void handleTranscribeYouTubeLocally()}
+                        {renderASROptions()}
+                              <button type="button" onClick={() => void handleTranscribeYouTubeLocally()}
                           disabled={isTranscribingMedia || isExtractingCC}
                           className="w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-950 hover:bg-emerald-100 disabled:opacity-60">
-                          {isTranscribingMedia ? transcribingMediaMessage : '本机快速提取音轨并识别（实验）'}
+                          {isTranscribingMedia ? transcribingMediaMessage : '本机提取完整音轨并识别（无需录屏）'}
                         </button>
-                        <p className="text-[11px] text-stone-500">需先启动本机音轨助手并保持启动窗口打开；获取整条视频音轨后交给百炼识别，无需实时播放。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装说明</a> · <a className="underline" href="http://127.0.0.1:18765/health" target="_blank" rel="noreferrer">检查助手是否运行</a></p>
-                        <button type="button" onClick={() => void startTabAudioRecording()}
-                          disabled={isRecordingTabAudio || isTranscribingMedia}
-                          className="w-full rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-xs font-bold text-amber-950 hover:bg-amber-50 disabled:opacity-60">
-                          {isRecordingTabAudio ? '正在录制标签页音频…' : '服务器获取失败？录制播放中的标签页音频'}
-                        </button>
-                        <p className="text-[11px] text-stone-500">选择播放视频的 Chrome 标签页并勾选“分享标签页音频”；弹窗关闭后播放视频，录完点右下角“结束录制并识别”。录制需要与播放等长，字幕会放入当前视频；也可在下方上传对应音频。</p>
+                        <p className="text-[11px] text-stone-500">整条下载视频音轨后交给百炼识别，不需要实时播放或录屏。手动启动时需先运行本机音轨助手并保持窗口打开。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装说明</a> · <a className="underline" href="http://127.0.0.1:18765/health" target="_blank" rel="noreferrer">检查助手是否运行</a></p>
+                        <details className="rounded-xl border border-stone-200 px-3 py-2">
+                          <summary className="cursor-pointer text-xs font-semibold text-stone-600">备用方式：实时录制标签页音频</summary>
+                          <div className="mt-2 space-y-2">
+                            <button type="button" onClick={() => void startTabAudioRecording()}
+                              disabled={isRecordingTabAudio || isTranscribingMedia}
+                              className="w-full rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-xs font-bold text-amber-950 hover:bg-amber-50 disabled:opacity-60">
+                              {isRecordingTabAudio ? '正在录制标签页音频…' : '录制播放中的标签页音频'}
+                            </button>
+                            <p className="text-[11px] text-stone-500">选择播放视频的 Chrome 标签页并勾选“分享标签页音频”；录制时长与视频播放时长相同。</p>
+                          </div>
+                        </details>
                       </div>
                     )}
 
