@@ -1635,6 +1635,46 @@ export default function MaterialsLibrary({
     return subs.map(s => `[${s.start.toFixed(3)}-${s.end.toFixed(3)}] ${s.text} | ${s.translation}`).join('\n');
   };
 
+  const cleanMusicCue = (text: string) => {
+    const cleaned = text
+    .replace(/\[\s*[^\]]*\bmusic\b[^\]]*\]|\(\s*[^)]*\bmusic\b[^)]*\)/gi, ' ')
+    .replace(/\[\s*(?:♪+|♫+)\s*\]|\(\s*(?:♪+|♫+)\s*\)/g, ' ')
+    .replace(/[♪♫]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+    return /^(?:music|instrumental music|background music)$/i.test(cleaned) ? '' : cleaned;
+  };
+
+  const isMusicOnlyCue = (text: string) => !cleanMusicCue(text);
+
+  const mergeShortSubtitleCues = (cues: any[]) => {
+    const merged: any[] = [];
+    for (const source of cues) {
+      const text = cleanMusicCue(String(source.text || ''));
+      if (!text || isMusicOnlyCue(String(source.text || ''))) continue;
+      const cue = { ...source, text, translation: cleanMusicCue(String(source.translation || '')) };
+      const previous = merged[merged.length - 1];
+      if (!previous) {
+        merged.push(cue);
+        continue;
+      }
+      const gap = cue.start - previous.end;
+      const previousWords = previous.text.split(/\s+/).length;
+      const combinedDuration = cue.end - previous.start;
+      const previousEndsSentence = /[.!?。！？]["')\]]?$/.test(previous.text);
+      const shouldMerge = !previousEndsSentence && gap <= 0.9 && gap >= -0.15
+        && previousWords < 24 && `${previous.text} ${cue.text}`.length <= 180 && combinedDuration <= 15;
+      if (shouldMerge) {
+        previous.text = `${previous.text} ${cue.text}`.replace(/\s+([,.;!?])/g, '$1');
+        previous.translation = [previous.translation, cue.translation].filter(Boolean).join('');
+        previous.end = Math.max(previous.end, cue.end);
+      } else {
+        merged.push(cue);
+      }
+    }
+    return merged.map((cue, index) => ({ ...cue, id: cue.id || `merged-${Date.now()}-${index}` }));
+  };
+
   const parseRawTextToSubtitles = (text: string) => {
     const normalizedText = normalizeTranscriptForImport(text);
     const lines = normalizedText.split('\n').map(l => l.trim()).filter(Boolean);
@@ -1675,7 +1715,7 @@ export default function MaterialsLibrary({
         translation
       });
     });
-    return parsed;
+    return mergeShortSubtitleCues(parsed);
   };
 
   const handleTextareaChange = (value: string) => {
@@ -1696,14 +1736,13 @@ export default function MaterialsLibrary({
     };
 
     for (const sourceLine of lines) {
-      const line = sourceLine.replace(/\[(?:music|♪+|applause|laughter)\]|\((?:music|♪+|applause|laughter)\)/gi, ' ')
-        .replace(/[♪♫]+/g, ' ').replace(/\s+/g, ' ').trim();
+      const line = cleanMusicCue(sourceLine);
       if (!line) continue;
       const columns = sourceLine.split('\t').map(column => column.trim()).filter(Boolean);
       const tabularTime = columns.length > 1 ? parseTime(columns[0]) : null;
       if (tabularTime !== null) {
-        const english = (columns[1] || '').replace(/\[(?:music|♪+|applause|laughter)\]|\((?:music|♪+|applause|laughter)\)/gi, ' ').replace(/\s+/g, ' ').trim();
-        const translation = (columns[2] || '').replace(/\[(?:music|♪+|applause|laughter)\]|\((?:music|♪+|applause|laughter)\)/gi, ' ').replace(/\s+/g, ' ').trim();
+        const english = cleanMusicCue(columns[1] || '');
+        const translation = cleanMusicCue(columns[2] || '');
         if (english) normalized.push(`[${tabularTime}] ${english}${translation ? ` | ${translation}` : ''}`);
         continue;
       }
@@ -1770,8 +1809,9 @@ export default function MaterialsLibrary({
       const data = { subtitles: await alignTranscript() };
 
       if (data && data.subtitles) {
-        setEditorSubtitles(data.subtitles);
-        setRawSubtitlePaste(formatSubtitlesToRawText(data.subtitles));
+        const mergedSubtitles = mergeShortSubtitleCues(data.subtitles);
+        setEditorSubtitles(mergedSubtitles);
+        setRawSubtitlePaste(formatSubtitlesToRawText(mergedSubtitles));
         alert('AI 智能字幕对齐与学术分段成功！已将原文智能重构并切分为双语段落，已保留已有字幕时间范围；句内拆分时间为估算，请校对后点击“保存修改并关闭”。');
       } else {
         throw new Error('返回的字幕格式无效');
@@ -1820,21 +1860,20 @@ export default function MaterialsLibrary({
         const contentCells = cells.filter((_cell, index) => index !== timeIndex);
         const textIndex = contentCells.findIndex(cell => /[a-z]/i.test(cell));
         if (!Number.isFinite(seconds) || textIndex < 0) continue;
-        const cleanCue = (cue: string) => cue.replace(/\[(?:music|♪+|applause|laughter)\]|\((?:music|♪+|applause|laughter)\)/gi, ' ').replace(/[♪♫]+/g, ' ').replace(/\s+/g, ' ').trim();
-        const text = cleanCue(contentCells[textIndex]);
-        const translation = cleanCue(contentCells.find((cell, index) => index !== textIndex && /[\u3400-\u9fff]/.test(cell)) || contentCells.find((_cell, index) => index !== textIndex) || '');
-        if (text) parsedRows.push({ time: seconds, text, translation });
+        const text = cleanMusicCue(contentCells[textIndex]);
+        const translation = cleanMusicCue(contentCells.find((cell, index) => index !== textIndex && /[\u3400-\u9fff]/.test(cell)) || contentCells.find((_cell, index) => index !== textIndex) || '');
+        if (text && !isMusicOnlyCue(contentCells[textIndex])) parsedRows.push({ time: seconds, text, translation });
       }
       const uniqueRows = parsedRows.filter((row, index) => index === 0 || row.time >= parsedRows[index - 1].time)
         .filter((row, index, all) => index === 0 || row.time !== all[index - 1].time || row.text !== all[index - 1].text);
       if (!uniqueRows.length) throw new Error('没有在 HTML 表格中识别到“时间 / 字幕 / 翻译”数据。请确认选择的是插件导出的字幕 HTML 文件。');
-      const imported = uniqueRows.map((row, index) => ({
+      const imported = mergeShortSubtitleCues(uniqueRows.map((row, index) => ({
         id: `html-${Date.now()}-${index}`,
         start: row.time,
         end: index + 1 < uniqueRows.length ? Math.max(row.time + 0.5, uniqueRows[index + 1].time) : row.time + 3,
         text: row.text,
         translation: row.translation || '（点击编辑中文翻译）',
-      }));
+      })));
       setEditorSubtitles(imported);
       setRawSubtitlePaste(formatSubtitlesToRawText(imported));
       alert(`已从 HTML 导入 ${imported.length} 条双语字幕。请检查预览并保存。`);
@@ -3694,9 +3733,9 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                             </div>
 
                             {/* Subtitle Scroll container */}
-                            <div 
+                              <div
                               ref={subtitlesContainerRef}
-                              className="overflow-y-auto max-h-[650px] pr-1 space-y-2.5 scroll-smooth text-left"
+                              className="overflow-y-auto max-h-[650px] pr-1 space-y-2.5 text-left"
                             >
                               {speakingReadingMode === 'continuous' ? (
                                 <div className="space-y-4 py-2 px-1 focus:outline-hidden selection:bg-amber-200 cursor-text leading-relaxed text-sm sm:text-base text-stone-800">
