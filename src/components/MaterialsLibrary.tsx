@@ -289,7 +289,7 @@ export default function MaterialsLibrary({
   const [rawSubtitlePaste, setRawSubtitlePaste] = useState('');
   const [isAligningWithAI, setIsAligningWithAI] = useState(false);
   const [alignmentProgress, setAlignmentProgress] = useState('');
-  const alignTranscript = () => alignSubtitleBatches(rawSubtitlePaste, maxSubtitleTime || 120, (done, total) => setAlignmentProgress(`AI 分段：${done}/${total} 批`));
+  const alignTranscript = () => alignSubtitleBatches(normalizeTranscriptForImport(rawSubtitlePaste), maxSubtitleTime || 120, (done, total) => setAlignmentProgress(`AI 分段：${done}/${total} 批`));
   const [globalTimeShift, setGlobalTimeShift] = useState(0);
   const [editorTab, setEditorTab] = useState<'paste' | 'shift' | 'excel'>('excel');
   const [isTranscribingMedia, setIsTranscribingMedia] = useState(false);
@@ -487,7 +487,8 @@ export default function MaterialsLibrary({
     const container = subtitlesContainerRef.current;
     if (element && container) {
       const top = element.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
-      container.scrollTo({ top: Math.max(0, top - container.clientHeight / 2 + element.offsetHeight / 2), behavior: 'smooth' });
+      // Follow the media clock directly; animated scrolling lags behind at faster playback speeds.
+      container.scrollTo({ top: Math.max(0, top - container.clientHeight / 2 + element.offsetHeight / 2), behavior: 'auto' });
     }
   }, [videoCurrentTime, activeMaterial?.videoSubtitles, isAutoSyncSubtitles]);
 
@@ -1635,7 +1636,8 @@ export default function MaterialsLibrary({
   };
 
   const parseRawTextToSubtitles = (text: string) => {
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const normalizedText = normalizeTranscriptForImport(text);
+    const lines = normalizedText.split('\n').map(l => l.trim()).filter(Boolean);
     if (lines.length === 0) return [];
 
     const parsed: any[] = [];
@@ -1654,7 +1656,9 @@ export default function MaterialsLibrary({
         if (timeMatch[2]) {
           end = parseFloat(timeMatch[2]);
         } else {
-          end = start + slice;
+          const nextTimedLine = lines.slice(index + 1).map(next => next.match(/^\[([\d.]+)(?:-([\d.]+))?\]/)).find(Boolean);
+          const nextStart = nextTimedLine ? Number(nextTimedLine[1]) : NaN;
+          end = Number.isFinite(nextStart) && nextStart > start ? nextStart : start + Math.max(1, Math.min(slice, 5));
         }
         content = line.replace(timeMatch[0], '').trim();
       }
@@ -1683,23 +1687,44 @@ export default function MaterialsLibrary({
   const normalizeTranscriptForImport = (value: string) => {
     const lines = value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const normalized: string[] = [];
-    let pendingTimestamp: number | null = null;
-    const timestampPattern = /^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.\d+)?\s*(.*)$/;
+    const parseTime = (value: string): number | null => {
+      const clean = value.trim();
+      if (/^\d+(?:\.\d+)?\s*s$/i.test(clean)) return Number(clean.replace(/\s*s$/i, ''));
+      const match = clean.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?$/);
+      if (!match) return null;
+      return Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(`0.${match[4] || 0}`);
+    };
 
-    for (const line of lines) {
-      const match = line.match(timestampPattern);
-      if (!match) {
-        normalized.push(pendingTimestamp === null ? line : `[${pendingTimestamp}] ${line}`);
-        pendingTimestamp = null;
+    for (const sourceLine of lines) {
+      const line = sourceLine.replace(/\[(?:music|♪+|applause|laughter)\]|\((?:music|♪+|applause|laughter)\)/gi, ' ')
+        .replace(/[♪♫]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!line) continue;
+      const columns = sourceLine.split('\t').map(column => column.trim()).filter(Boolean);
+      const tabularTime = columns.length > 1 ? parseTime(columns[0]) : null;
+      if (tabularTime !== null) {
+        const english = (columns[1] || '').replace(/\[(?:music|♪+|applause|laughter)\]|\((?:music|♪+|applause|laughter)\)/gi, ' ').replace(/\s+/g, ' ').trim();
+        const translation = (columns[2] || '').replace(/\[(?:music|♪+|applause|laughter)\]|\((?:music|♪+|applause|laughter)\)/gi, ' ').replace(/\s+/g, ' ').trim();
+        if (english) normalized.push(`[${tabularTime}] ${english}${translation ? ` | ${translation}` : ''}`);
         continue;
       }
-      const seconds = Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]);
-      const text = match[4].trim();
-      if (text) normalized.push(`[${seconds}] ${text}`);
-      else pendingTimestamp = seconds;
+      const timestampPrefix = line.match(/^((?:(?:\d{1,2}:)?\d{1,2}:\d{2})(?:\.\d+)?|\d+(?:\.\d+)?\s*s)\s+(.+)$/i);
+      if (timestampPrefix) {
+        const seconds = parseTime(timestampPrefix[1]);
+        const content = timestampPrefix[2].trim();
+        if (seconds !== null && content) normalized.push(`[${seconds}] ${content}`);
+        continue;
+      }
+      normalized.push(line);
     }
-    if (pendingTimestamp !== null) normalized.push(`[${pendingTimestamp}]`);
-    return normalized.join('\n');
+    return normalized.map((line, index) => {
+      const cue = line.match(/^\[([\d.]+)\](.*)$/);
+      if (!cue) return line;
+      const start = Number(cue[1]);
+      const nextCue = normalized.slice(index + 1).map(next => next.match(/^\[([\d.]+)\]/)).find(Boolean);
+      const nextStart = nextCue ? Number(nextCue[1]) : NaN;
+      const end = Number.isFinite(nextStart) && nextStart > start ? nextStart : start + 3;
+      return `[${start}-${end}]${cue[2]}`;
+    }).join('\n');
   };
 
   const pasteTranscriptFromClipboard = async () => {
@@ -1795,9 +1820,10 @@ export default function MaterialsLibrary({
         const contentCells = cells.filter((_cell, index) => index !== timeIndex);
         const textIndex = contentCells.findIndex(cell => /[a-z]/i.test(cell));
         if (!Number.isFinite(seconds) || textIndex < 0) continue;
-        const text = contentCells[textIndex];
-        const translation = contentCells.find((cell, index) => index !== textIndex && /[\u3400-\u9fff]/.test(cell)) || contentCells.find((_cell, index) => index !== textIndex) || '';
-        parsedRows.push({ time: seconds, text, translation });
+        const cleanCue = (cue: string) => cue.replace(/\[(?:music|♪+|applause|laughter)\]|\((?:music|♪+|applause|laughter)\)/gi, ' ').replace(/[♪♫]+/g, ' ').replace(/\s+/g, ' ').trim();
+        const text = cleanCue(contentCells[textIndex]);
+        const translation = cleanCue(contentCells.find((cell, index) => index !== textIndex && /[\u3400-\u9fff]/.test(cell)) || contentCells.find((_cell, index) => index !== textIndex) || '');
+        if (text) parsedRows.push({ time: seconds, text, translation });
       }
       const uniqueRows = parsedRows.filter((row, index) => index === 0 || row.time >= parsedRows[index - 1].time)
         .filter((row, index, all) => index === 0 || row.time !== all[index - 1].time || row.text !== all[index - 1].text);
@@ -3351,6 +3377,14 @@ export default function MaterialsLibrary({
                             <textarea
                               rows={16}
                               value={rawSubtitlePaste}
+                              onPaste={(event) => {
+                                const pasted = event.clipboardData.getData('text/plain');
+                                if (!pasted) return;
+                                event.preventDefault();
+                                const normalized = normalizeTranscriptForImport(pasted);
+                                setRawSubtitlePaste(normalized);
+                                setEditorSubtitles(parseRawTextToSubtitles(normalized));
+                              }}
                               onChange={(e) => setRawSubtitlePaste(e.target.value)}
                               placeholder="复制 YouTube 文字稿后，点上方“粘贴已复制的文字稿”，或直接在这里粘贴。
 支持整段英文和带时间轴的文字稿，例如：
@@ -4781,6 +4815,14 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                     <textarea
                       rows={18}
                       value={rawSubtitlePaste}
+                      onPaste={(event) => {
+                        const pasted = event.clipboardData.getData('text/plain');
+                        if (!pasted) return;
+                        event.preventDefault();
+                        const normalized = normalizeTranscriptForImport(pasted);
+                        setRawSubtitlePaste(normalized);
+                        setEditorSubtitles(parseRawTextToSubtitles(normalized));
+                      }}
                       onChange={(e) => handleTextareaChange(e.target.value)}
                       placeholder="支持格式(可以直接贴入整段英文段落)：
 例1（直接贴英文段落，系统将为您切句对时）：
