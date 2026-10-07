@@ -292,28 +292,11 @@ export default function MaterialsLibrary({
   const alignTranscript = () => alignSubtitleBatches(rawSubtitlePaste, maxSubtitleTime || 120, (done, total) => setAlignmentProgress(`AI 分段：${done}/${total} 批`));
   const [globalTimeShift, setGlobalTimeShift] = useState(0);
   const [editorTab, setEditorTab] = useState<'paste' | 'shift' | 'excel'>('excel');
-  const [isExtractingCC, setIsExtractingCC] = useState(false);
   const [isTranscribingMedia, setIsTranscribingMedia] = useState(false);
-  const [asrMode, setAsrMode] = useState<'standard' | 'parallel' | 'benchmark'>('standard');
-  const renderASROptions = () => (
-    <label className="block text-xs text-stone-600 space-y-1">
-      <span>完整字幕识别方式</span>
-      <select aria-label="完整字幕识别方式" value={asrMode} disabled={isTranscribingMedia}
-        onChange={e => setAsrMode(e.target.value as typeof asrMode)} className="block w-full rounded-lg border border-stone-300 p-2 bg-white">
-        <option value="standard">整条识别</option>
-        <option value="parallel">并行识别完整音轨（实验）</option>
-        <option value="benchmark">对比两种方式耗时（会识别两次，按用量计费）</option>
-      </select>
-      {asrMode !== 'standard' && <span className="block">仍会一次交付完整字幕。分段交界处需校对；尚未保证一定更快。</span>}
-    </label>
-  );
   const [transcribingMediaMessage, setTranscribingMediaMessage] = useState('正在上传音视频…');
   const [ccVideoUrl, setCcVideoUrl] = useState('');
   const [isParsingExcel, setIsParsingExcel] = useState(false);
   const mediaFileInputRef = useRef<HTMLInputElement | null>(null);
-  const tabAudioRecorderRef = useRef<MediaRecorder | null>(null);
-  const tabAudioStreamRef = useRef<MediaStream | null>(null);
-  const [isRecordingTabAudio, setIsRecordingTabAudio] = useState(false);
 
   // Material rename modal state
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
@@ -1504,60 +1487,6 @@ export default function MaterialsLibrary({
     }
   }, [isSubtitleEditorOpen, activeMaterial]);
 
-  // Extract YouTube CC subtitles and translate them using backend endpoint
-  const handleExtractCCSubtitles = async () => {
-    const videoUrl = ccVideoUrl.trim() || activeMaterial?.url?.trim() || '';
-    if (!videoUrl) {
-      alert('请先输入或提供有效的 YouTube 视频链接！');
-      return;
-    }
-    setIsExtractingCC(true);
-    try {
-      const response = await fetch('/api/youtube/subtitles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: videoUrl })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || '提取 CC 字幕请求失败');
-      }
-
-      const result = await response.json();
-      if (result.success && Array.isArray(result.subtitles)) {
-        const importedSubtitles = result.subtitles
-          .filter((s: any) => s && typeof s.text === 'string' && s.text.trim())
-          .map((s: any, index: number) => ({
-            ...s,
-            id: s.id || `yt-${Date.now()}-${index}`,
-            start: Number.isFinite(Number(s.start)) ? Number(s.start) : 0,
-            end: Number.isFinite(Number(s.end)) ? Number(s.end) : Number(s.start || 0) + 3,
-            translation: typeof s.translation === 'string' ? s.translation : '',
-          }));
-        if (importedSubtitles.length === 0) throw new Error('抓取结果中没有可导入的字幕');
-
-        if (!activeMaterial) throw new Error('当前视频材料已不存在，请重新打开后再试');
-        const updatedMaterials = materials.map(m => m.id === activeMaterial.id
-          ? { ...m, videoSubtitles: importedSubtitles, sentences: importedSubtitles.map((s: any) => s.text) }
-          : m);
-        setMaterials(updatedMaterials);
-        localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
-        setEditorSubtitles(importedSubtitles);
-        setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
-        const message = result.note || `已抓取 ${importedSubtitles.length} 条 YouTube 官方字幕。`;
-        alert(`${message}\n字幕已直接导入并保存到当前视频。`);
-      } else {
-        throw new Error('未返回有效的字幕数据');
-      }
-    } catch (err: any) {
-      console.error('Error extracting CC:', err);
-      alert(err.message || '无法获取该视频的官方字幕。请粘贴真实文稿或字幕，再使用 AI 翻译和分段。');
-    } finally {
-      setIsExtractingCC(false);
-    }
-  };
-
   const receiveTranscription = async (jobId: string, materialId: string, startOffset = 0, clientTiming = '') => {
       let result: any;
       for (let attempt = 0; attempt < 360; attempt++) {
@@ -1597,114 +1526,25 @@ export default function MaterialsLibrary({
         return updated;
       });
       setSelectedMaterialId(materialId);
-      setIsSubtitleEditorOpen(true);
-      setEditorSubtitles(importedSubtitles);
-      setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
+      const isAudioMaterial = materials.some(material => material.id === materialId && material.type === 'audio');
+      if (isAudioMaterial) {
+        const updatedMap = {
+          ...lineTranslationsMap,
+          [materialId]: importedSubtitles.map((subtitle: any) => ({ original: subtitle.text, translation: subtitle.translation || '' })),
+        };
+        setLineTranslationsMap(updatedMap);
+        localStorage.setItem('ielts_material_line_translations', JSON.stringify(updatedMap));
+        setShowLineByLine(true);
+        setShowAudioTranscript(true);
+      } else {
+        setIsSubtitleEditorOpen(true);
+        setEditorSubtitles(importedSubtitles);
+        setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
+      }
       alert(`语音识别完成，已导入 ${importedSubtitles.length} 句字幕。${clientTiming}${result.warning || '可以在下方校对并保存修改。'}`);
   };
 
-  const handleTranscribeYouTube = async () => {
-    if (!activeMaterial || isTranscribingMedia) return;
-    const materialId = activeMaterial.id;
-    setIsTranscribingMedia(true);
-    setTranscribingMediaMessage('正在获取 YouTube 音轨…');
-    setCcVideoUrl(activeMaterial.url || '');
-    setIsSubtitleEditorOpen(true);
-    try {
-      // Prefer a locally running yt-dlp helper: it can read YouTube from the user's
-      // network and avoids waiting for a cloud-hosted request that YouTube may block.
-      try {
-        const localHealth = await fetch('http://127.0.0.1:18765/health', { signal: AbortSignal.timeout(2000) });
-        if (localHealth.ok && (await localHealth.json()).ok) {
-          setTranscribingMediaMessage('检测到本机助手，正在提取完整音轨（无需录屏）…');
-          await handleTranscribeYouTubeLocally();
-          return;
-        }
-      } catch {
-        // The helper is optional. Continue with the cloud path when it is not reachable.
-      }
-      const response = await fetch('/api/asr/transcribe-youtube', {
-        signal: AbortSignal.timeout(30000),
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-ASR-Mode': asrMode },
-        body: JSON.stringify({ url: activeMaterial.url }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || '无法启动视频识别');
-      if (!result.jobId) throw new Error('服务器未返回任务编号');
-      await receiveTranscription(result.jobId, materialId);
-    } catch (error: any) {
-      const message = String(error?.message || '');
-      const serverCannotFetchAudio = /YouTube 要求服务器登录|YouTube 音轨地址向服务器返回 403|YouTube 暂时限制了服务器|服务器无法获取 YouTube 音轨|获取 YouTube 音轨超时/i.test(message);
-      if (serverCannotFetchAudio) {
-        setTranscribingMediaMessage('服务器无法读取此视频，正在切换到本机提取完整音轨…');
-        await handleTranscribeYouTubeLocally();
-        return;
-      }
-      alert(error?.name === 'TimeoutError' ? '服务器响应超时，本次等待已结束，请重试。' : message || 'YouTube 语音识别失败，请重试。');
-    } finally {
-      setIsTranscribingMedia(false);
-    }
-  };
-
-  const handleTranscribeYouTubeLocally = async () => {
-    if (!activeMaterial || isTranscribingMedia) return;
-    const materialId = activeMaterial.id;
-    let videoId = '';
-    try {
-      const url = new URL(activeMaterial.url || '');
-      videoId = url.hostname === 'youtu.be' ? url.pathname.slice(1) : url.searchParams.get('v') || url.pathname.match(/^\/(?:embed|shorts|live)\/([^/]+)/)?.[1] || '';
-      if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) throw new Error('视频链接无效。');
-    } catch {
-      alert('请先为这条材料填写有效的 YouTube 视频链接。');
-      return;
-    }
-    setIsTranscribingMedia(true);
-    setTranscribingMediaMessage('正在连接本机助手（最多 8 秒）…');
-    setIsSubtitleEditorOpen(true);
-    const downloadStarted = performance.now();
-    let localAudioStage: 'connect' | 'download' | 'transcribe' = 'connect';
-    try {
-      const health = await fetch('http://127.0.0.1:18765/health', { signal: AbortSignal.timeout(8000) });
-      if (!health.ok || !(await health.json()).ok) throw new Error('本机助手健康检查失败，请重新启动助手。');
-      setTranscribingMediaMessage('正在从本机获取音轨（最长等待 12 分钟）…');
-      const response = await fetch('http://127.0.0.1:18765/audio', {
-        signal: AbortSignal.timeout(12 * 60 * 1000),
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoId }),
-      });
-      localAudioStage = 'download';
-      setTranscribingMediaMessage('正在下载视频音轨…');
-      if (!response.ok) {
-        const result = await response.json().catch(() => ({}));
-        throw new Error(result.error || '本机音轨助手无法获取此视频。');
-      }
-      const size = Number(response.headers.get('Content-Length') || 0);
-      if (size > 200 * 1024 * 1024) throw new Error('音轨超过 200 MB。');
-      const mimeType = (response.headers.get('Content-Type') || '').split(';')[0];
-      const extension = mimeType === 'audio/mp4' ? 'm4a' : mimeType === 'audio/mpeg' ? 'mp3' : mimeType === 'audio/ogg' ? 'ogg' : 'webm';
-      const blob = await response.blob();
-      if (!blob.size) throw new Error('本机助手返回了空音轨。');
-      localAudioStage = 'transcribe';
-      await handleTranscribeMediaFile(new File([blob], `youtube-audio.${extension}`, { type: mimeType }), materialId, 0, performance.now() - downloadStarted);
-    } catch (error: any) {
-      const reason = error?.name === 'TimeoutError'
-        ? '本机音轨请求超时，本次等待已结束。请确认助手窗口仍在运行、浏览器允许本站访问本地网络，再重试。'
-        : error instanceof TypeError
-        ? localAudioStage === 'connect'
-          ? '网页无法连接本机音轨助手。请确认启动窗口保持打开，并允许 Chrome 对本站的「本地网络访问」；可打开 http://127.0.0.1:18765/health 检查助手。'
-          : localAudioStage === 'download'
-            ? '已连接本机助手，但音轨传输中断。请确认启动窗口仍在运行，并重试。'
-            : '音轨已取得，但上传识别服务时网络中断，请重试。'
-        : error.message || '请检查本机音轨助手是否仍在运行。';
-      alert(`本机快速提取失败：${reason}`);
-    } finally {
-      setIsTranscribingMedia(false);
-    }
-  };
-
-  const handleTranscribeMediaFile = async (file: File, materialId = activeMaterial?.id, startOffset = 0, downloadMs = 0) => {
+  const handleTranscribeMediaFile = async (file: File, materialId = activeMaterial?.id) => {
     if (!materialId) return;
     const extension = file.name.split('.').pop()?.toLowerCase() || '';
     const mimeByExtension: Record<string, string> = {
@@ -1738,7 +1578,6 @@ export default function MaterialsLibrary({
         headers: {
           'Content-Type': 'application/octet-stream',
           'X-Media-Mime-Type': mimeType,
-          'X-ASR-Mode': asrMode,
           'X-Media-Name': encodeURIComponent(file.name),
         },
         body: file,
@@ -1746,7 +1585,7 @@ export default function MaterialsLibrary({
       const uploadResult = await response.json();
       if (!response.ok) throw new Error(uploadResult.error || '音视频转写失败');
       if (!uploadResult.jobId) throw new Error('服务器没有返回转写任务编号。');
-      await receiveTranscription(uploadResult.jobId, materialId, startOffset, `${downloadMs ? `本机获取音轨 ${(downloadMs / 1000).toFixed(1)} 秒；` : ''}上传 ${((performance.now() - uploadStarted) / 1000).toFixed(1)} 秒。`);
+      await receiveTranscription(uploadResult.jobId, materialId, 0, `上传 ${((performance.now() - uploadStarted) / 1000).toFixed(1)} 秒。`);
     } catch (error: any) {
       console.error('Error transcribing media file:', error);
       alert(`音视频转写失败：${error?.name === 'TimeoutError' ? '上传或查询识别进度超时，本次等待已结束，请检查网络。' : error.message || '请重试或检查百炼 API Key 配置。'}`);
@@ -1754,64 +1593,6 @@ export default function MaterialsLibrary({
       setIsTranscribingMedia(false);
       setTranscribingMediaMessage('正在上传音视频…');
       if (mediaFileInputRef.current) mediaFileInputRef.current.value = '';
-    }
-  };
-
-  const stopTabAudioRecording = () => {
-    const recorder = tabAudioRecorderRef.current;
-    if (recorder?.state === 'recording') recorder.stop();
-    else tabAudioStreamRef.current?.getTracks().forEach(track => track.stop());
-  };
-
-  const startTabAudioRecording = async () => {
-    if (!activeMaterial || isRecordingTabAudio || isTranscribingMedia) return;
-    if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === 'undefined') {
-      alert('当前浏览器不支持标签页音频录制，请使用最新版 Chrome，或上传对应音频文件。');
-      return;
-    }
-    const materialId = activeMaterial.id;
-    let displayStream: MediaStream | null = null;
-    try {
-      displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      const audioTracks = displayStream.getAudioTracks();
-      if (!audioTracks.length) throw new Error('没有收到标签页音频。请在共享窗口选择播放 YouTube 的「Chrome 标签页」，并勾选「同时分享标签页音频」。');
-      const recordingMime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find(type => MediaRecorder.isTypeSupported(type));
-      if (!recordingMime) throw new Error('当前浏览器不支持所需的录音格式，请改用最新版 Chrome。');
-      const stream = displayStream;
-      const startOffset = Math.max(0, Number(ytPlayerRef.current?.getCurrentTime?.() ?? videoCurrentTimeRef.current) || 0);
-      const recorder = new MediaRecorder(new MediaStream(audioTracks), { mimeType: recordingMime, audioBitsPerSecond: 64000 });
-      const chunks: BlobPart[] = [];
-      recorder.ondataavailable = event => { if (event.data.size > 0) chunks.push(event.data); };
-      recorder.onstop = () => {
-        stream.getTracks().forEach(track => track.stop());
-        tabAudioRecorderRef.current = null;
-        tabAudioStreamRef.current = null;
-        setIsRecordingTabAudio(false);
-        const baseMime = recordingMime.split(';')[0];
-        const blob = new Blob(chunks, { type: baseMime });
-        if (blob.size < 1024) {
-          alert('没有录到足够的声音。请先播放 YouTube 视频，再选择共享播放视频的 Chrome 标签页和音频。');
-          return;
-        }
-        if (blob.size > 200 * 1024 * 1024) {
-          alert('录制音频超过 200 MB，请缩短录制片段。');
-          return;
-        }
-        setIsSubtitleEditorOpen(true);
-        const extension = baseMime === 'audio/mp4' ? 'm4a' : 'webm';
-        void handleTranscribeMediaFile(new File([blob], `youtube-tab-audio.${extension}`, { type: baseMime }), materialId, startOffset);
-      };
-      stream.getTracks().forEach(track => {
-        track.onended = () => { if (recorder.state === 'recording') recorder.stop(); };
-      });
-      tabAudioStreamRef.current = stream;
-      tabAudioRecorderRef.current = recorder;
-      recorder.start(1000);
-      setIsRecordingTabAudio(true);
-      setIsSubtitleEditorOpen(false);
-    } catch (error: any) {
-      displayStream?.getTracks().forEach(track => track.stop());
-      if (error?.name !== 'NotAllowedError') alert(error?.message || '无法开始录制标签页音频。');
     }
   };
 
@@ -2346,7 +2127,7 @@ export default function MaterialsLibrary({
     setRenamingMaterialName('');
   };
 
-  const handleCreateMaterial = () => {
+  const handleCreateMaterial = async () => {
     if (!selectedFolderId) {
       alert('请先在上方文件夹列表中选择或创建一个分类文件夹！');
       return;
@@ -2378,7 +2159,13 @@ export default function MaterialsLibrary({
     };
 
     if (newMat.type === 'audio' && tempAudioBase64) {
-      saveAudio(newMat.id, tempAudioBase64, tempAudioMimeType).catch(console.error);
+      try {
+        await saveAudio(newMat.id, tempAudioBase64, tempAudioMimeType);
+      } catch (error: any) {
+        console.error('Failed to save uploaded audio to IndexedDB:', error);
+        alert(`音频保存失败：${error?.name === 'QuotaExceededError' ? '浏览器本地空间不足，请删除部分材料后重试。' : error?.message || '请重新选择音频后重试。'}`);
+        return;
+      }
     }
     setTempAudioBase64('');
     setTempAudioMimeType('');
@@ -2526,75 +2313,35 @@ export default function MaterialsLibrary({
 
   // 6. AI Call - Transcribe Audio for Listening
   const handleAITranscribe = async () => {
-    if (!activeMaterial) return;
+    if (!activeMaterial || isSummarizing || isTranscribingMedia) return;
     setIsSummarizing(true);
     try {
       const audioRecord = await getAudio(activeMaterial.id);
       if (!audioRecord) {
         throw new Error('未在本地浏览器数据库中找到对应的音频。此音频可能是升级前上传或本地缓存已被清除，请删除该材料重新导入音频后再试。');
       }
-      
-      const res = await fetch('/api/gemini/transcribe-audio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sampleName: activeMaterial.name,
-          audioData: audioRecord.base64,
-          mimeType: audioRecord.mimeType
-        })
-      });
-      
-      if (!res.ok) {
-        const errText = await res.text();
-        let errMsg = errText;
-        try {
-          const parsedErr = JSON.parse(errText);
-          errMsg = parsedErr.error || errText;
-        } catch (_) {}
-        throw new Error(errMsg);
-      }
-      
-      const data = await res.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      const sentencesArray = data.sentences || [];
-      const formattedLines = sentencesArray.map((s: any) => {
-        if (typeof s === 'string') {
-          return { original: s, translation: '' };
-        }
-        return {
-          original: s.original || s.english || '',
-          translation: s.translation || s.chinese || ''
-        };
-      });
-
-      // Extract raw sentence strings to store in material sentences
-      const rawSentences = formattedLines.map((l: any) => l.original);
-
-      setMaterials(prev => {
-        const updated = prev.map(m => m.id === activeMaterial.id ? { 
-          ...m, 
-          content: data.transcript || rawSentences.join(' '), 
-          sentences: rawSentences,
-          summary: data.vocab ? JSON.stringify({ keyVocabulary: data.vocab, summary: '听写录音核心学术语境', grammarPoints: [], collocations: [] }) : m.summary
-        } : m);
-        localStorage.setItem('ielts_material_files', JSON.stringify(updated));
-        return updated;
-      });
-
-      // Instantly populate lineTranslationsMap for the sentence-by-sentence view
-      const updatedMap = {
-        ...lineTranslationsMap,
-        [activeMaterial.id]: formattedLines
+      if (!audioRecord.base64) throw new Error('本地音频内容为空，请重新上传音频后重试。');
+      const estimatedBytes = Math.floor(audioRecord.base64.length * 3 / 4);
+      if (estimatedBytes > 200 * 1024 * 1024) throw new Error('音频超过 200 MB 上传上限，请压缩或剪短后重试。');
+      const binary = atob(audioRecord.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      let mimeType = (audioRecord.mimeType || '').toLowerCase().split(';')[0].trim();
+      const audioMimeAliases: Record<string, string> = {
+        'audio/x-m4a': 'audio/mp4',
+        'audio/x-wav': 'audio/wav',
+        'audio/wave': 'audio/wav',
+        'audio/x-pn-wav': 'audio/wav',
+        'audio/mp3': 'audio/mpeg',
       };
-      setLineTranslationsMap(updatedMap);
-      localStorage.setItem('ielts_material_line_translations', JSON.stringify(updatedMap));
-      setShowLineByLine(true);
-      setShowAudioTranscript(true);
-
+      mimeType = audioMimeAliases[mimeType] || mimeType || 'audio/mpeg';
+      if (!mimeType.startsWith('audio/')) {
+        throw new Error(`音频格式标记异常（${audioRecord.mimeType || '未知'}），请重新上传 MP3、M4A 或 WAV 文件。`);
+      }
+      const extension = mimeType.includes('wav') ? 'wav' : mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : mimeType.includes('flac') ? 'flac' : 'mp3';
+      const file = new File([bytes], `audio.${extension}`, { type: mimeType });
+      setIsSummarizing(false);
+      await handleTranscribeMediaFile(file, activeMaterial.id);
     } catch (e: any) {
       console.error(e);
       alert('音频转写失败: ' + e.message);
@@ -3033,15 +2780,6 @@ export default function MaterialsLibrary({
 
   return (
     <div className="space-y-6" id="materials-library-container">
-      {isRecordingTabAudio && (
-        <div className="fixed bottom-5 right-5 z-[100] flex max-w-[calc(100vw-2.5rem)] items-center gap-3 rounded-xl border border-amber-300 bg-white p-3 shadow-xl">
-          <span className="text-xs font-semibold text-stone-800">正在录制标签页音频；请播放视频</span>
-          <button type="button" onClick={stopTabAudioRecording} className="shrink-0 rounded-lg bg-stone-950 px-3 py-2 text-xs font-bold text-white hover:bg-stone-800">
-            结束录制并识别
-          </button>
-        </div>
-      )}
-      
       {/* Category Tabs Indicator */}
       <div className="flex items-center justify-between border-b border-stone-200/80 pb-4">
         <div>
@@ -3441,8 +3179,7 @@ export default function MaterialsLibrary({
                               </h3>
                               <p className="text-[11px] text-stone-500 leading-relaxed">
                                 下方会内嵌<b>该链接对应的原视频</b>，可直接播放。
-                                YouTube 有字幕时可尝试「抓取官方字幕」；没有字幕时，点击「识别 YouTube 视频语音（百炼）」。
-                                也可以上传对应音频，或<b>粘贴字幕/文稿</b>，结果会保存在这条视频材料中。
+                                请在 YouTube 播放器菜单中打开“显示文字稿”，复制字幕后粘贴到本网页；导入结果会保存在这条视频材料中。
                               </p>
                             </div>
                           </div>
@@ -3455,52 +3192,15 @@ export default function MaterialsLibrary({
                           )}
 
                           {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
-                            <button
-                              type="button"
+                            <button type="button"
                               onClick={() => {
                                 setCcVideoUrl(activeMaterial.url || '');
+                                setRawSubtitlePaste(activeMaterial.content || '');
                                 setIsSubtitleEditorOpen(true);
-                                void handleExtractCCSubtitles();
                               }}
-                              disabled={isExtractingCC}
-                              className="w-full py-3 px-4 bg-red-600 hover:bg-red-700 disabled:bg-stone-300 text-white rounded-xl text-sm font-bold transition cursor-pointer"
-                            >
-                              {isExtractingCC ? '正在抓取官方字幕…' : '抓取 YouTube 官方字幕'}
+                              className="w-full py-3 px-4 bg-amber-400 hover:bg-amber-500 text-stone-900 rounded-xl text-sm font-bold transition">
+                              粘贴 YouTube 字幕/文字稿
                             </button>
-                          )}
-
-                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
-                            <button type="button" onClick={() => void handleTranscribeYouTube()}
-                              disabled={isTranscribingMedia || isExtractingCC}
-                              className="w-full py-3 px-4 bg-amber-400 hover:bg-amber-500 disabled:bg-stone-300 text-stone-900 rounded-xl text-sm font-bold transition">
-                                {isTranscribingMedia ? transcribingMediaMessage : '完整提取并识别字幕（无需录屏）'}
-                            </button>
-                          )}
-
-                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
-                            <div className="space-y-1.5">
-                              {renderASROptions()}
-                              <button type="button" onClick={() => void handleTranscribeYouTubeLocally()}
-                                disabled={isTranscribingMedia || isExtractingCC}
-                                className="w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-950 hover:bg-emerald-100 disabled:opacity-60">
-                                {isTranscribingMedia ? transcribingMediaMessage : '本机提取完整音轨并识别（无需录屏）'}
-                              </button>
-                              <p className="text-[11px] text-stone-500">整条下载视频音轨后交给百炼识别，不需要播放或录屏。手动启动时需先在电脑上运行本机音轨助手并保持窗口打开。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装说明</a> · <a className="underline" href="http://127.0.0.1:18765/health" target="_blank" rel="noreferrer">检查助手是否运行</a></p>
-                            </div>
-                          )}
-
-                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
-                            <details className="rounded-xl border border-stone-200 px-3 py-2">
-                              <summary className="cursor-pointer text-xs font-semibold text-stone-600">备用方式：实时录制标签页音频</summary>
-                              <div className="mt-2 space-y-1.5">
-                                <button type="button" onClick={() => void startTabAudioRecording()}
-                                  disabled={isRecordingTabAudio || isTranscribingMedia}
-                                  className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-950 hover:bg-amber-100 disabled:opacity-60">
-                                  {isRecordingTabAudio ? '正在录制标签页音频…' : '录制播放中的标签页音频'}
-                                </button>
-                                <p className="text-[11px] leading-relaxed text-stone-500">选择播放视频的 Chrome 标签页并勾选“分享标签页音频”，录制时长与视频播放时长相同。</p>
-                              </div>
-                            </details>
                           )}
 
                           {/* 无字幕时也内嵌原视频，让用户先看到真实视频 */}
@@ -4310,8 +4010,8 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                             <div className="flex flex-col items-center justify-center py-24 text-center space-y-3.5">
                               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600"></div>
                               <div className="space-y-1">
-                                <p className="text-xs font-bold text-stone-700">AI正在智能语音识别与听写转写...</p>
-                                <p className="text-[11px] text-stone-400">我们将为您提取高精度的英语听抄文本、中英文对照翻译以及考点核心词汇，请耐心稍候</p>
+                                <p className="text-xs font-bold text-stone-700">百炼正在识别音频并生成逐句文本...</p>
+                                <p className="text-[11px] text-stone-400">识别完成后会保存英文文本与时间轴；中文翻译会在可用时一并生成。</p>
                               </div>
                             </div>
                           ) : isTranslatingByLine ? (
@@ -4348,15 +4048,15 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                               <div className="space-y-1 max-w-sm">
                                 <h4 className="text-xs font-bold text-stone-900">🎧 暂无音频听抄文稿</h4>
                                 <p className="text-[10.5px] text-stone-500 leading-relaxed">
-                                  该音频材料还没有逐句听写文稿。您可以直接在下方一键调用 AI 智能大模型进行语音识别与逐字听抄转写。
+                                  该音频材料还没有逐句听写文稿。请使用已配置的阿里云百炼语音识别生成文本。
                                 </p>
                               </div>
                               <button
                                 onClick={handleAITranscribe}
-                                disabled={isSummarizing}
+                                disabled={isSummarizing || isTranscribingMedia}
                                 className="py-2.5 px-5 bg-amber-400 hover:bg-amber-300 disabled:bg-stone-100 disabled:text-stone-400 text-stone-950 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
                               >
-                                {isSummarizing ? 'AI 正在智能识别并逐句听写中...' : '🪄 一键 AI 智能语音听写转写'}
+                                {isSummarizing || isTranscribingMedia ? transcribingMediaMessage : '🎧 使用百炼识别音频并生成逐句听写'}
                               </button>
                             </div>
                           ) : activeMaterial.content ? (
@@ -4964,7 +4664,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                 <div>
                   <h3 className="font-serif font-bold text-base leading-tight">📥 智能双语字幕导入与 AI 自动断句</h3>
                   <p className="text-[10px] text-stone-400 font-sans mt-0.5">
-                    识别视频语音、上传对应音频或粘贴文字稿，字幕会保存在当前视频材料中。
+                    粘贴自己从 YouTube 获取的文字稿，字幕会保存在当前视频材料中。
                   </p>
                 </div>
               </div>
@@ -4998,48 +4698,12 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                     </p>
 
                     {/(youtube\.com|youtu\.be)/i.test(ccVideoUrl) && (
-                      <button
-                        type="button"
-                        onClick={handleExtractCCSubtitles}
-                        disabled={isExtractingCC}
-                        className="w-full py-2.5 px-4 bg-red-600 hover:bg-red-700 disabled:bg-stone-300 text-white rounded-xl text-xs font-bold transition cursor-pointer"
-                      >
-                        {isExtractingCC ? '正在获取并翻译 YouTube 官方字幕…' : '抓取 YouTube 官方字幕'}
-                      </button>
+                      <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
+                        在 YouTube 播放器菜单中选择“显示文字稿”，复制字幕后粘贴到下方。没有文字稿时，请先自行取得可用的字幕或文稿。
+                      </p>
                     )}
 
-                    {/(youtube\.com|youtu\.be)/i.test(activeMaterial?.url || '') && (
-                      <div className="space-y-2">
-                        <button type="button" onClick={() => void handleTranscribeYouTube()}
-                          disabled={isTranscribingMedia || isExtractingCC}
-                          className="w-full rounded-xl bg-amber-400 px-4 py-2.5 text-xs font-bold text-stone-900 hover:bg-amber-500 disabled:opacity-60">
-                          {isTranscribingMedia ? transcribingMediaMessage : '完整提取并识别字幕（无需录屏）'}
-                        </button>
-                        <p className="text-[11px] text-stone-500">
-                          无需官方字幕。先检查本机助手：已启动时直接下载整条音轨；否则尝试云端获取，若 YouTube 拦截服务器会自动改用本机助手。音轨由百炼识别并导入；请保持页面打开，视频最长 3 小时、音轨最大 200 MB。
-                        </p>
-                        {renderASROptions()}
-                              <button type="button" onClick={() => void handleTranscribeYouTubeLocally()}
-                          disabled={isTranscribingMedia || isExtractingCC}
-                          className="w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-950 hover:bg-emerald-100 disabled:opacity-60">
-                          {isTranscribingMedia ? transcribingMediaMessage : '本机提取完整音轨并识别（无需录屏）'}
-                        </button>
-                        <p className="text-[11px] text-stone-500">整条下载视频音轨后交给百炼识别，不需要实时播放或录屏。手动启动时需先运行本机音轨助手并保持窗口打开。<a className="underline" href="https://github.com/Soso24601/IELTS-Learning/blob/main/docs/local-youtube-bridge-prototype.md" target="_blank" rel="noreferrer">查看安装说明</a> · <a className="underline" href="http://127.0.0.1:18765/health" target="_blank" rel="noreferrer">检查助手是否运行</a></p>
-                        <details className="rounded-xl border border-stone-200 px-3 py-2">
-                          <summary className="cursor-pointer text-xs font-semibold text-stone-600">备用方式：实时录制标签页音频</summary>
-                          <div className="mt-2 space-y-2">
-                            <button type="button" onClick={() => void startTabAudioRecording()}
-                              disabled={isRecordingTabAudio || isTranscribingMedia}
-                              className="w-full rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-xs font-bold text-amber-950 hover:bg-amber-50 disabled:opacity-60">
-                              {isRecordingTabAudio ? '正在录制标签页音频…' : '录制播放中的标签页音频'}
-                            </button>
-                            <p className="text-[11px] text-stone-500">选择播放视频的 Chrome 标签页并勾选“分享标签页音频”；录制时长与视频播放时长相同。</p>
-                          </div>
-                        </details>
-                      </div>
-                    )}
-
-                    <input
+                    {!/(youtube\.com|youtu\.be)/i.test(activeMaterial?.url || '') && <input
                       ref={mediaFileInputRef}
                       type="file"
                       accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-msvideo,video/mpeg,video/3gpp,.mp3,.m4a,.wav,.ogg,.flac,.aac,.mp4,.mov,.avi,.webm,.wmv,.mpeg,.mpg,.3gp"
@@ -5048,18 +4712,18 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                         const file = event.target.files?.[0];
                         if (file) void handleTranscribeMediaFile(file);
                       }}
-                    />
-                    <button
+                    />}
+                    {!/(youtube\.com|youtu\.be)/i.test(activeMaterial?.url || '') && <button
                       type="button"
                       onClick={() => mediaFileInputRef.current?.click()}
-                      disabled={isTranscribingMedia || isExtractingCC}
+                      disabled={isTranscribingMedia}
                       className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-950 transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
                     >
                       {isTranscribingMedia ? transcribingMediaMessage : '上传对应音频/视频，生成本材料字幕'}
-                    </button>
-                    <p className="text-[10px] text-stone-500">
+                    </button>}
+                    {!/(youtube\.com|youtu\.be)/i.test(activeMaterial?.url || '') && <p className="text-[10px] text-stone-500">
                       适用于没有字幕的内容。选择本地 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM 文件，单个文件最大 200 MB；需先在「账号与设置 → 语音识别」配置百炼 API Key。
-                    </p>
+                    </p>}
 
                     <textarea
                       rows={18}
