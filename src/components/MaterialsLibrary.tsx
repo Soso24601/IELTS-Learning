@@ -1773,6 +1773,52 @@ export default function MaterialsLibrary({
     alert(`成功直接解析并生成 ${parsed.length} 行双语段落！您可以在下方的预览表格中微调并保存。`);
   };
 
+  const handleHtmlSubtitleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const html = await file.text();
+      const document = new DOMParser().parseFromString(html, 'text/html');
+      const rows = Array.from(document.querySelectorAll('tr'));
+      const parsedRows: { time: number; text: string; translation: string }[] = [];
+      for (const row of rows) {
+        const cells = Array.from(row.querySelectorAll('th,td')).map(cell => (cell.textContent || '').replace(/\s+/g, ' ').trim());
+        if (cells.length < 2) continue;
+        const headerText = cells.join(' ').toLowerCase();
+        if (/\btime\b/.test(headerText) && /subtitle|字幕/.test(headerText)) continue;
+        const timeIndex = cells.findIndex(cell => /^(?:(\d{1,2}:)?\d{1,2}:)?\d{1,2}(?:\.\d+)?\s*s?$/i.test(cell));
+        if (timeIndex < 0) continue;
+        const timeMatch = cells[timeIndex].match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?\s*s?$/i);
+        const seconds = timeMatch
+          ? Number(timeMatch[1] || 0) * 3600 + Number(timeMatch[2]) * 60 + Number(timeMatch[3]) + Number(`0.${timeMatch[4] || 0}`)
+          : Number(cells[timeIndex].replace(/\s*s$/i, ''));
+        const contentCells = cells.filter((_cell, index) => index !== timeIndex);
+        const textIndex = contentCells.findIndex(cell => /[a-z]/i.test(cell));
+        if (!Number.isFinite(seconds) || textIndex < 0) continue;
+        const text = contentCells[textIndex];
+        const translation = contentCells.find((cell, index) => index !== textIndex && /[\u3400-\u9fff]/.test(cell)) || contentCells.find((_cell, index) => index !== textIndex) || '';
+        parsedRows.push({ time: seconds, text, translation });
+      }
+      const uniqueRows = parsedRows.filter((row, index) => index === 0 || row.time >= parsedRows[index - 1].time)
+        .filter((row, index, all) => index === 0 || row.time !== all[index - 1].time || row.text !== all[index - 1].text);
+      if (!uniqueRows.length) throw new Error('没有在 HTML 表格中识别到“时间 / 字幕 / 翻译”数据。请确认选择的是插件导出的字幕 HTML 文件。');
+      const imported = uniqueRows.map((row, index) => ({
+        id: `html-${Date.now()}-${index}`,
+        start: row.time,
+        end: index + 1 < uniqueRows.length ? Math.max(row.time + 0.5, uniqueRows[index + 1].time) : row.time + 3,
+        text: row.text,
+        translation: row.translation || '（点击编辑中文翻译）',
+      }));
+      setEditorSubtitles(imported);
+      setRawSubtitlePaste(formatSubtitlesToRawText(imported));
+      alert(`已从 HTML 导入 ${imported.length} 条双语字幕。请检查预览并保存。`);
+    } catch (error: any) {
+      alert(`HTML 字幕导入失败：${error?.message || '文件读取失败。'}`);
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   // Excel/CSV subtitle import and smart AI resegmentation
   const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -3287,14 +3333,21 @@ export default function MaterialsLibrary({
                                 <h4 className="text-xs font-bold text-stone-900">📝 视频文字稿面板</h4>
                                 <p className="mt-1 text-[10px] leading-relaxed text-stone-500">YouTube 播放器里的文字稿不能被网页自动读取。请在 YouTube 点“显示文字稿”并复制，再粘贴到这里。</p>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => void pasteTranscriptFromClipboard()}
-                                className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-[11px] font-bold text-stone-700 transition hover:border-amber-400 hover:bg-amber-50"
-                              >
-                                <Clipboard className="h-3.5 w-3.5" />粘贴已复制的文字稿
-                              </button>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void pasteTranscriptFromClipboard()}
+                                  className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-[11px] font-bold text-stone-700 transition hover:border-amber-400 hover:bg-amber-50"
+                                >
+                                  <Clipboard className="h-3.5 w-3.5" />粘贴已复制的文字稿
+                                </button>
+                                <label className="shrink-0 inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-950 transition hover:bg-amber-100">
+                                  <input type="file" accept=".html,.htm,text/html" className="hidden" onChange={handleHtmlSubtitleImport} />
+                                  导入字幕 HTML
+                                </label>
+                              </div>
                             </div>
+                            <p className="text-[10px] leading-relaxed text-stone-500">插件导出包含 Time / Subtitle / Machine Translation 表格的 HTML 时，可直接导入；文件只在本机浏览器解析。</p>
                             <textarea
                               rows={16}
                               value={rawSubtitlePaste}
