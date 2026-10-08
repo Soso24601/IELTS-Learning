@@ -17,6 +17,10 @@
 - ☁️ 云端存档：学习进度 / 词书 / 材料 / 统计全部随账号走，换设备不丢
 - 🤖 每账号自带大模型：设置里填自己的 API Key（DeepSeek 一键预设 / 任意 OpenAI 兼容 / Gemini），费用归各账号自己
 
+## Chrome 字幕导入扩展（原型）
+
+仓库包含一个可在 Chrome「加载已解压的扩展程序」中试用的扩展：`extension/youtube-transcript-copier/`。它读取用户已经打开的 YouTube 文字稿面板，将带时间戳的字幕复制到剪贴板，再粘贴到本网页字幕编辑器。扩展不上传字幕，也不识别没有字幕轨道的视频。安装和测试步骤见该目录的 README。
+
 ## 技术栈与数据
 
 - 前端 React 19 + Vite + Tailwind；后端 Express（单进程同源服务）
@@ -157,5 +161,6 @@ server.ts             Express 入口（AI/文件/代理端点 + 静态托管）
 server/lib/           db(node:sqlite) · auth(会话/密码/限速) · llm(BYOK客户端) · routes · net(SSRF防护)
 src/                  React 前端（App / 6 大模块 / AuthPage / AccountModal）
 src/lib/              authApi · sync(本地→云端同步) · localData · llmPresets
+extension/            Chrome YouTube 字幕导入扩展原型
 data/                 （运行时生成，勿提交）app.db 等
 ```

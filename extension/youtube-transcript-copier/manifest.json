@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "IELTS YouTube 字幕导入助手",
+  "version": "0.1.0",
+  "description": "从当前 YouTube 视频的文字稿面板提取带时间戳字幕，并复制到 IELTS 学习网页。",
+  "permissions": ["activeTab", "scripting", "clipboardWrite"],
+  "action": {
+    "default_title": "提取 YouTube 字幕",
+    "default_popup": "popup.html"
+  }
+}

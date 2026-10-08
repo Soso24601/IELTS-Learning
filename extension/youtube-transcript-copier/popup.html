@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IELTS 字幕导入助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <div class="eyebrow">IELTS LEARNING</div>
+    <h1>YouTube 字幕导入</h1>
+    <p class="help">先在 YouTube 视频菜单中打开「显示文字稿」，再提取字幕。</p>
+    <button id="extract" class="primary">提取并复制字幕</button>
+    <p id="status" class="status" role="status" aria-live="polite">字幕只在浏览器本地读取，不会上传。</p>
+    <div class="divider"></div>
+    <p class="steps">提取后回到学习网页，在文字稿框中粘贴，再点击 AI 自动断句。</p>
+    <button id="open-site" class="secondary">打开 IELTS 学习网页</button>
+    <p class="note">此版本读取 YouTube 已提供的字幕；没有字幕轨道的视频暂不支持语音识别。</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
