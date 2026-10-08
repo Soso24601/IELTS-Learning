@@ -19,6 +19,7 @@ test('AI subtitle cleanup removes music labels without merging sentence boundari
     { id: 'c', start: 7, end: 10, text: 'How are you?', translation: '你好吗？' },
   ]);
   assert.equal(cleanMusicCue('♪ background music ♪'), '');
+  assert.equal(cleanMusicCue('>> No, there is a breeze. >> Why? Like >> be careful >> Ready.'), 'No, there is a breeze. Why? Like be careful Ready.');
 });
 
 test('import normalization removes timestamped music rows without leaking their timestamps as transcript text', () => {

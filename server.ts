@@ -625,7 +625,7 @@ app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
       if (m) return Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(`0.${m[4] || 0}`);
       return /^\d+(?:\.\d+)?$/.test(text) ? Number(text) : null;
     };
-    const clean = (v: any) => String(v ?? '').replace(/\[\s*[^\]]*\bmusic\b[^\]]*\]|\(\s*[^)]*\bmusic\b[^)]*\)/gi, ' ').replace(/[♪♫]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const clean = (v: any) => String(v ?? '').replace(/\[\s*[^\]]*\bmusic\b[^\]]*\]|\(\s*[^)]*\bmusic\b[^)]*\)/gi, ' ').replace(/\s*>{2,}\s*/g, ' ').replace(/[♪♫]+/g, ' ').replace(/\s+([,.!?;:])/g, '$1').replace(/\s+/g, ' ').trim();
     const rows: { time: number; text: string; translation: string }[] = [];
     for (const sheetName of workbook.SheetNames) {
       const matrix: any[][] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: false }) || [];

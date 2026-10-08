@@ -4,7 +4,10 @@ export function cleanMusicCue(text: string): string {
   const cleaned = text
     .replace(/\[\s*[^\]]*\bmusic\b[^\]]*\]|\(\s*[^)]*\bmusic\b[^)]*\)/gi, ' ')
     .replace(/\[\s*(?:♪+|♫+)\s*\]|\(\s*(?:♪+|♫+)\s*\)/g, ' ')
+    // Exported transcripts may use >> as a speaker/cue marker.
+    .replace(/\s*>{2,}\s*/g, ' ')
     .replace(/[♪♫]+/g, ' ')
+    .replace(/\s+([,.!?;:])/g, '$1')
     .replace(/\s+/g, ' ')
     .trim();
   return /^(?:music|instrumental music|background music)$/i.test(cleaned) ? '' : cleaned;
