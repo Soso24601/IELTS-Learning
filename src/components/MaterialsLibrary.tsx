@@ -1896,7 +1896,7 @@ export default function MaterialsLibrary({
         if (!dataUrl) throw new Error('读取文件失败');
         const base64 = dataUrl.split(',')[1];
 
-        const response = await fetch('/api/materials/parse-excel', {
+        const response = await fetch('/api/materials/parse-subtitle-sheet', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1916,7 +1916,7 @@ export default function MaterialsLibrary({
           setEditorSubtitles(result.subtitles);
           setRawSubtitlePaste(formatSubtitlesToRawText(result.subtitles));
           setEditorTab('visual');
-          alert(`Excel/CSV 英文字幕成功导入并完成 AI 智能重组断句与中英双语对照！共整理出 ${result.subtitles.length} 句精美双语字幕。已导入至“可视化编辑”中预览，请点击底部保存。`);
+          alert(`字幕表格导入完成：读取 ${result.sourceCueCount ?? result.subtitles.length} 条有效原字幕，合并为 ${result.subtitles.length} 段。原文与时间取自表格，音乐标注已清理；请在“可视化编辑”检查后保存。`);
         } else {
           throw new Error('返回的字幕格式无效');
         }
@@ -1952,7 +1952,7 @@ export default function MaterialsLibrary({
         if (!dataUrl) throw new Error('读取文件失败');
         const base64 = dataUrl.split(',')[1];
 
-        const response = await fetch('/api/materials/parse-excel', {
+        const response = await fetch('/api/materials/parse-subtitle-sheet', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1992,7 +1992,7 @@ export default function MaterialsLibrary({
             setTimeout(() => setSelectedMaterialId(currentId), 20);
           }, 50);
 
-          alert(`Excel/CSV 智能分段重组提取成功！共整理出 ${result.subtitles.length} 段高品质中英对照学术段落！已即时载入，您可以开始边听边看、精听跟读。`);
+          alert(`字幕表格导入完成：读取 ${result.sourceCueCount ?? result.subtitles.length} 条有效原字幕，合并为 ${result.subtitles.length} 段。原文与时间取自表格，音乐标注已清理；字幕已载入当前视频。`);
         } else {
           throw new Error('返回的字幕格式无效');
         }

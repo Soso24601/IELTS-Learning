@@ -612,6 +612,62 @@ ${combinedRawText.slice(0, 40000)}
   }
 });
 
+// Preserve workbook words and timestamps; the model only proposes contiguous cue groups.
+app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
+  try {
+    const { base64 } = req.body;
+    if (!base64) return res.status(400).json({ error: '缺少字幕文件。' });
+    const workbook = XLSX.read(Buffer.from(base64, 'base64'), { type: 'buffer' });
+    const parseTime = (value: any): number | null => {
+      const text = String(value ?? '').trim();
+      if (/^\d+(?:\.\d+)?\s*s$/i.test(text)) return Number(text.replace(/\s*s$/i, ''));
+      const m = text.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?$/);
+      if (m) return Number(m[1] || 0) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(`0.${m[4] || 0}`);
+      return /^\d+(?:\.\d+)?$/.test(text) ? Number(text) : null;
+    };
+    const clean = (v: any) => String(v ?? '').replace(/\[\s*[^\]]*\bmusic\b[^\]]*\]|\(\s*[^)]*\bmusic\b[^)]*\)/gi, ' ').replace(/[♪♫]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const rows: { time: number; text: string; translation: string }[] = [];
+    for (const sheetName of workbook.SheetNames) {
+      const matrix: any[][] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: false }) || [];
+      if (!matrix.length) continue;
+      const headers = matrix[0].map((v: any) => String(v ?? '').trim().toLowerCase());
+      const find = (re: RegExp, fallback: number) => { const i = headers.findIndex((h: string) => re.test(h)); return i < 0 ? fallback : i; };
+      const ti = find(/^(time|时间)$/, 0), si = find(/^(subtitle|字幕|text|原文)$/, 1), mi = find(/^(machine translation|translation|翻译|中文)$/, 2);
+      for (const row of matrix.slice(1)) {
+        const time = parseTime(row?.[ti]);
+        const text = clean(row?.[si]);
+        const translation = clean(row?.[mi]);
+        if (time !== null && text && !/^(?:music|instrumental music)$/i.test(text)) rows.push({ time, text, translation });
+      }
+      if (rows.length) break;
+    }
+    rows.sort((a, b) => a.time - b.time);
+    if (!rows.length) return res.status(400).json({ error: '没有识别到字幕行，请检查 Time、Subtitle 列。' });
+    if (rows.length > 500) return res.status(400).json({ error: '最多支持 500 条字幕，请拆分文件。' });
+    const ai = await getLLMClientForRequest(req);
+    const allGroups: number[][] = [];
+    for (let offset = 0; offset < rows.length; offset += 60) {
+      const batch = rows.slice(offset, offset + 60);
+      const prompt = `只把相邻字幕碎片合并成易读、适合跟读的句子。必须返回 JSON {"groups":[[0,1],[2],[3,4]]}，数字是局部行号；每个行号必须按顺序恰好出现一次，且每组连续。通常每组 5-18 个英文词，最多 24 词；时间间隔超过 8 秒不得合并。不要改写字幕或输出时间。\n${JSON.stringify(batch.map((r, i) => ({ i, time: r.time, text: r.text })))}`;
+      const response = await ai.models.generateContent({ model: 'gemini-3.6-flash', contents: prompt, config: { responseMimeType: 'application/json', responseSchema: { type: Type.OBJECT, properties: { groups: { type: Type.ARRAY, items: { type: Type.ARRAY, items: { type: Type.NUMBER } } } }, required: ['groups'] } } });
+      const candidate = safeJSONParse(response.text)?.groups as number[][];
+      const flattened = Array.isArray(candidate) ? candidate.flat() : [];
+      if (!Array.isArray(candidate) || flattened.length !== batch.length || flattened.some((n, i) => n !== i) || candidate.some(g => !Array.isArray(g) || !g.length)) throw new Error('AI 分段未完整覆盖字幕，原始字幕未修改。请重试。');
+      allGroups.push(...candidate.map(g => g.map(i => i + offset)));
+    }
+    const subtitles = allGroups.map((group, i) => {
+      const first = rows[group[0]], last = rows[group[group.length - 1]], next = rows[group[group.length]];
+      const gap = next ? next.time - last.time : 4;
+      const end = Math.max(first.time + 0.6, last.time + Math.max(1.2, Math.min(4, gap * 0.75)));
+      return { id: `sheet-${Date.now()}-${i}`, start: first.time, end, text: group.map(n => rows[n].text).join(' ').replace(/\s+([,.!?;:])/g, '$1'), translation: group.map(n => rows[n].translation).filter(Boolean).join('') };
+    });
+    res.json({ success: true, sourceCueCount: rows.length, subtitles });
+  } catch (error: any) {
+    console.error('Error importing subtitle sheet:', error);
+    res.status(error.code === 'LLM_NOT_CONFIGURED' ? 403 : 500).json({ error: error.message || '字幕表格导入失败。' });
+  }
+});
+
 // AI subtitle alignment and smart sentence reconstruction
 app.post('/api/gemini/align-subtitles', async (req, res) => {
   try {
