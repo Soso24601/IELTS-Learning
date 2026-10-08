@@ -1662,7 +1662,8 @@ export default function MaterialsLibrary({
       const previousWords = previous.text.split(/\s+/).length;
       const combinedDuration = cue.end - previous.start;
       const previousEndsSentence = /[.!?。！？]["')\]]?$/.test(previous.text);
-      const shouldMerge = !previousEndsSentence && gap <= 0.9 && gap >= -0.15
+      const hasReadableSentence = previousEndsSentence && previousWords >= 8;
+      const shouldMerge = !hasReadableSentence && gap <= 0.9 && gap >= -0.15
         && previousWords < 24 && `${previous.text} ${cue.text}`.length <= 180 && combinedDuration <= 15;
       if (shouldMerge) {
         previous.text = `${previous.text} ${cue.text}`.replace(/\s+([,.;!?])/g, '$1');
@@ -3444,7 +3445,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                     const data = { subtitles: await alignTranscript() };
 
                                     if (data && data.subtitles) {
-                                      const sortedSubtitles = [...data.subtitles]
+                                      const sortedSubtitles = mergeShortSubtitleCues(data.subtitles)
                                         .filter((s: any) => s.text && s.text.trim().length > 0)
                                         .map((s: any, index: number) => ({
                                           ...s,
