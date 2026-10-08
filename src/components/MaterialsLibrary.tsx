@@ -3727,6 +3727,10 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                 >
                                   📥 导入并 AI 分段
                                 </button>
+                                <label className={`text-[10px] bg-emerald-100 hover:bg-emerald-200 text-emerald-950 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-colors border border-emerald-200 ${isParsingExcel ? 'cursor-wait opacity-60' : 'cursor-pointer'}`}>
+                                  <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={isParsingExcel} onChange={handleActiveMaterialExcelImport} />
+                                  {isParsingExcel ? '正在导入…' : '📊 导入 Excel'}
+                                </label>
                               </div>
                             </div>
 
