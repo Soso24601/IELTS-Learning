@@ -35,7 +35,7 @@ import {
   EyeOff,
   Search
 } from 'lucide-react';
-import { alignSubtitleBatches, subtitleAtTime } from '../lib/subtitles';
+import { alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime } from '../lib/subtitles';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder, MaterialType } from '../types';
 
 // --- IndexedDB for persistent audio files storage ---
@@ -1635,16 +1635,6 @@ export default function MaterialsLibrary({
     return subs.map(s => `[${s.start.toFixed(3)}-${s.end.toFixed(3)}] ${s.text} | ${s.translation}`).join('\n');
   };
 
-  const cleanMusicCue = (text: string) => {
-    const cleaned = text
-    .replace(/\[\s*[^\]]*\bmusic\b[^\]]*\]|\(\s*[^)]*\bmusic\b[^)]*\)/gi, ' ')
-    .replace(/\[\s*(?:♪+|♫+)\s*\]|\(\s*(?:♪+|♫+)\s*\)/g, ' ')
-    .replace(/[♪♫]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-    return /^(?:music|instrumental music|background music)$/i.test(cleaned) ? '' : cleaned;
-  };
-
   const isMusicOnlyCue = (text: string) => !cleanMusicCue(text);
 
   const mergeShortSubtitleCues = (cues: any[]) => {
@@ -1725,47 +1715,6 @@ export default function MaterialsLibrary({
     setEditorSubtitles(parsed);
   };
 
-  const normalizeTranscriptForImport = (value: string) => {
-    const lines = value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    const normalized: string[] = [];
-    const parseTime = (value: string): number | null => {
-      const clean = value.trim();
-      if (/^\d+(?:\.\d+)?\s*s$/i.test(clean)) return Number(clean.replace(/\s*s$/i, ''));
-      const match = clean.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?$/);
-      if (!match) return null;
-      return Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(`0.${match[4] || 0}`);
-    };
-
-    for (const sourceLine of lines) {
-      const line = cleanMusicCue(sourceLine);
-      if (!line) continue;
-      const columns = sourceLine.split('\t').map(column => column.trim()).filter(Boolean);
-      const tabularTime = columns.length > 1 ? parseTime(columns[0]) : null;
-      if (tabularTime !== null) {
-        const english = cleanMusicCue(columns[1] || '');
-        const translation = cleanMusicCue(columns[2] || '');
-        if (english) normalized.push(`[${tabularTime}] ${english}${translation ? ` | ${translation}` : ''}`);
-        continue;
-      }
-      const timestampPrefix = line.match(/^((?:(?:\d{1,2}:)?\d{1,2}:\d{2})(?:\.\d+)?|\d+(?:\.\d+)?\s*s)\s+(.+)$/i);
-      if (timestampPrefix) {
-        const seconds = parseTime(timestampPrefix[1]);
-        const content = timestampPrefix[2].trim();
-        if (seconds !== null && content) normalized.push(`[${seconds}] ${content}`);
-        continue;
-      }
-      normalized.push(line);
-    }
-    return normalized.map((line, index) => {
-      const cue = line.match(/^\[([\d.]+)\](.*)$/);
-      if (!cue) return line;
-      const start = Number(cue[1]);
-      const nextCue = normalized.slice(index + 1).map(next => next.match(/^\[([\d.]+)\]/)).find(Boolean);
-      const nextStart = nextCue ? Number(nextCue[1]) : NaN;
-      const end = Number.isFinite(nextStart) && nextStart > start ? nextStart : start + 3;
-      return `[${start}-${end}]${cue[2]}`;
-    }).join('\n');
-  };
 
   const pasteTranscriptFromClipboard = async () => {
     try {
@@ -1810,9 +1759,11 @@ export default function MaterialsLibrary({
       const data = { subtitles: await alignTranscript() };
 
       if (data && data.subtitles) {
-        const mergedSubtitles = mergeShortSubtitleCues(data.subtitles);
-        setEditorSubtitles(mergedSubtitles);
-        setRawSubtitlePaste(formatSubtitlesToRawText(mergedSubtitles));
+        const alignedSubtitles = cleanAlignedSubtitles(data.subtitles)
+          .map((subtitle, index) => ({ ...subtitle, id: subtitle.id || `aligned-${index}` }))
+          .sort((a, b) => a.start - b.start);
+        setEditorSubtitles(alignedSubtitles);
+        setRawSubtitlePaste(formatSubtitlesToRawText(alignedSubtitles));
         alert('AI 智能字幕对齐与学术分段成功！已将原文智能重构并切分为双语段落，已保留已有字幕时间范围；句内拆分时间为估算，请校对后点击“保存修改并关闭”。');
       } else {
         throw new Error('返回的字幕格式无效');
@@ -3445,7 +3396,7 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                     const data = { subtitles: await alignTranscript() };
 
                                     if (data && data.subtitles) {
-                                      const sortedSubtitles = mergeShortSubtitleCues(data.subtitles)
+                                      const sortedSubtitles = cleanAlignedSubtitles(data.subtitles)
                                         .filter((s: any) => s.text && s.text.trim().length > 0)
                                         .map((s: any, index: number) => ({
                                           ...s,

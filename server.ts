@@ -19,6 +19,7 @@ import { assertSafeHttpUrl } from './server/lib/net';
 import { downloadYoutubeAudio, youtubeVideoId } from './server/lib/youtubeAudio';
 import { splitAudio, parallelTranscribe, type ASRResult } from './server/lib/parallelAsr';
 import { transcribeQwenFile } from './server/lib/qwenAsr';
+import { cleanAsrSubtitleCues, refineAsrSubtitles } from './server/lib/subtitleRefinement';
 import { createServer as createViteServer } from 'vite';
 import { createRequire } from 'module';
 import * as XLSX from 'xlsx';
@@ -1137,14 +1138,30 @@ async function runAlibabaTranscription(
     result = await transcribeQwenFile(mediaUrl, config);
     timingNote = `英文识别耗时 ${((Date.now() - totalStarted) / 1000).toFixed(1)} 秒（不含下载、上传和中文翻译）。`;
   }
-  const { transcript, subtitles } = result;
+  const { transcript } = result;
+  let subtitles = cleanAsrSubtitleCues(result.subtitles);
   if (!subtitles.length) throw new Error('没有识别到清晰语音。请确认音轨中有人声。');
   const translationStarted = Date.now();
+  const processingNotes: string[] = [];
 
-  job.message = '语音识别完成，正在生成逐句中文翻译…';
+  job.message = '百炼识别完成，正在智能整理字幕断句…';
   job.updatedAt = Date.now();
   try {
     const llm = await getLLMClientForRequest(req);
+    try {
+      subtitles = await refineAsrSubtitles(subtitles, llm, (done, total) => {
+        job.message = `正在整理字幕断句：${done}/${total} 批…`;
+        job.updatedAt = Date.now();
+      });
+      if (!subtitles.length) throw new Error('整理后没有可用字幕。');
+    } catch (error: any) {
+      console.warn('Subtitle grouping skipped; preserving Alibaba ASR cues:', error?.message);
+      subtitles = cleanAsrSubtitleCues(result.subtitles);
+      processingNotes.push(`AI 字幕整理未完成，已保留百炼原始字幕${error?.message ? `（${error.message}）` : ''}。`);
+    }
+
+    job.message = `字幕整理完成，正在生成中文翻译（${subtitles.length} 句）…`;
+    job.updatedAt = Date.now();
     const translationDeadline = Date.now() + 3 * 60 * 1000;
     for (let offset = 0; offset < subtitles.length; offset += 40) {
       if (Date.now() >= translationDeadline) break;
@@ -1165,11 +1182,12 @@ async function runAlibabaTranscription(
     }
   } catch (error: any) {
     console.warn('Subtitle translation skipped:', error?.message);
+    processingNotes.push(`中文翻译未完成${error?.message ? `（${error.message}）` : ''}。`);
   }
   job.status = 'completed';
   job.message = '转写完成';
   job.result = { transcript: transcript || subtitles.map((item) => item.text).join(' '), subtitles,
-    warning: `${timingNote} 翻译阶段耗时 ${((Date.now() - translationStarted) / 1000).toFixed(1)} 秒。${subtitles.some(item => !item.translation) ? '部分中文翻译未完成，可稍后继续翻译。' : ''}` };
+    warning: `${timingNote} 字幕整理与翻译阶段耗时 ${((Date.now() - translationStarted) / 1000).toFixed(1)} 秒。${processingNotes.join('')}${subtitles.some(item => !item.translation) && !processingNotes.some(note => note.includes('中文翻译未完成')) ? '部分中文翻译未完成，可稍后继续翻译。' : ''}` };
   job.updatedAt = Date.now();
 }
 

@@ -388,7 +388,7 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
           >
             <div className="space-y-2.5">
               <p className="text-[11px] leading-relaxed text-stone-500">
-                上传音频或视频后，使用阿里云百炼 Qwen 识别英文和时间轴；逐句中文翻译仍使用上方配置的文本大模型。API Key 会加密保存在账号中。
+                上传音频或视频后，使用阿里云百炼 Qwen 识别英文和时间轴；上方配置的文本大模型会检查识别内容、整理字幕断句并生成逐句中文翻译。API Key 会加密保存在账号中。
               </p>
               <div>
                 <label className="text-[11px] font-mono text-stone-500 block mb-1">百炼地域（API Key 需与地域匹配）</label>

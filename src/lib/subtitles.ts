@@ -1,5 +1,69 @@
 export type TimedSubtitle = { id: string; start: number; end: number; text: string; translation?: string };
 
+export function cleanMusicCue(text: string): string {
+  const cleaned = text
+    .replace(/\[\s*[^\]]*\bmusic\b[^\]]*\]|\(\s*[^)]*\bmusic\b[^)]*\)/gi, ' ')
+    .replace(/\[\s*(?:♪+|♫+)\s*\]|\(\s*(?:♪+|♫+)\s*\)/g, ' ')
+    .replace(/[♪♫]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return /^(?:music|instrumental music|background music)$/i.test(cleaned) ? '' : cleaned;
+}
+
+/** Clean model output while preserving the AI's sentence boundaries and timings. */
+export function cleanAlignedSubtitles(subtitles: TimedSubtitle[]): TimedSubtitle[] {
+  return subtitles.flatMap(subtitle => {
+    const text = cleanMusicCue(subtitle.text);
+    if (!text) return [];
+    const translation = subtitle.translation ? cleanMusicCue(subtitle.translation) : subtitle.translation;
+    return [{ ...subtitle, text, translation }];
+  });
+}
+
+export function normalizeTranscriptForImport(value: string): string {
+  const lines = value.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const normalized: string[] = [];
+  const parseTime = (value: string): number | null => {
+    const clean = value.trim();
+    if (/^\d+(?:\.\d+)?\s*s$/i.test(clean)) return Number(clean.replace(/\s*s$/i, ''));
+    const match = clean.match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?$/);
+    if (!match) return null;
+    return Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(`0.${match[4] || 0}`);
+  };
+
+  for (const sourceLine of lines) {
+    const columns = sourceLine.split('\t').map(column => column.trim()).filter(Boolean);
+    const tabularTime = columns.length > 1 ? parseTime(columns[0]) : null;
+    if (tabularTime !== null) {
+      const english = cleanMusicCue(columns[1] || '');
+      const translation = cleanMusicCue(columns[2] || '');
+      if (english) normalized.push(`[${tabularTime}] ${english}${translation ? ` | ${translation}` : ''}`);
+      continue;
+    }
+
+    const timestampPrefix = sourceLine.match(/^((?:(?:\d{1,2}:)?\d{1,2}:\d{2})(?:\.\d+)?|\d+(?:\.\d+)?\s*s)\s+(.+)$/i);
+    if (timestampPrefix) {
+      const seconds = parseTime(timestampPrefix[1]);
+      const content = cleanMusicCue(timestampPrefix[2]);
+      if (seconds !== null && content) normalized.push(`[${seconds}] ${content}`);
+      continue;
+    }
+
+    const line = cleanMusicCue(sourceLine);
+    if (line) normalized.push(line);
+  }
+
+  return normalized.map((line, index) => {
+    const cue = line.match(/^\[([\d.]+)\](.*)$/);
+    if (!cue) return line;
+    const start = Number(cue[1]);
+    const nextCue = normalized.slice(index + 1).map(next => next.match(/^\[([\d.]+)\]/)).find(Boolean);
+    const nextStart = nextCue ? Number(nextCue[1]) : NaN;
+    const end = Number.isFinite(nextStart) && nextStart > start ? nextStart : start + 3;
+    return `[${start}-${end}]${cue[2]}`;
+  }).join('\n');
+}
+
 export function subtitleAtTime(subtitles: TimedSubtitle[], time: number): string | null {
   return subtitles.find(s => time >= s.start && time < s.end)?.id ?? null;
 }
