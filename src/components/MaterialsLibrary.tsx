@@ -38,6 +38,33 @@ import {
 import { alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime } from '../lib/subtitles';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder, MaterialType } from '../types';
 
+function subtitleRowsFromHtml(html: string): string {
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const rows: Array<{ time: number; text: string; translation: string }> = [];
+  for (const row of Array.from(document.querySelectorAll('tr'))) {
+    const cells = Array.from(row.querySelectorAll('th,td')).map(cell => (cell.textContent || '').replace(/\s+/g, ' ').trim());
+    const timeIndex = cells.findIndex(cell => /^(?:(?:(?:\d{1,2}:)?\d{1,2}:\d{2})(?:\.\d+)?|\d+(?:\.\d+)?\s*s)$/i.test(cell));
+    if (timeIndex < 0) continue;
+    const match = cells[timeIndex].match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?\s*$/)
+      || cells[timeIndex].match(/^(\d+(?:\.\d+)?)\s*s$/i);
+    if (!match) continue;
+    const time = match[2] !== undefined
+      ? Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(`0.${match[4] || 0}`)
+      : Number(match[1]);
+    const content = cells.filter((_cell, index) => index !== timeIndex);
+    const english = content.find(cell => /[a-z]/i.test(cell));
+    if (!english) continue;
+    const translation = content.find(cell => /[\u3400-\u9fff]/.test(cell)) || '';
+    const cleanText = cleanMusicCue(english);
+    if (cleanText) rows.push({ time, text: cleanText, translation: cleanMusicCue(translation) });
+  }
+  return rows.map((row, index) => {
+    const next = rows[index + 1]?.time;
+    const end = next !== undefined && next > row.time ? next : row.time + 3;
+    return `[${row.time}-${end}] ${row.text}${row.translation ? ` | ${row.translation}` : ''}`;
+  }).join('\n');
+}
+
 // --- IndexedDB for persistent audio files storage ---
 const dbPromise = typeof window !== 'undefined' ? new Promise<IDBDatabase>((resolve, reject) => {
   const request = indexedDB.open('ielts_audio_db', 1);
@@ -1718,9 +1745,22 @@ export default function MaterialsLibrary({
 
   const pasteTranscriptFromClipboard = async () => {
     try {
-      if (!navigator.clipboard?.readText) throw new Error('当前浏览器不支持读取剪贴板');
-      const clipboardText = await navigator.clipboard.readText();
-      if (!clipboardText.trim()) throw new Error('剪贴板是空的。请先在 YouTube 文字稿面板中复制文字稿。');
+      let clipboardText = '';
+      if (navigator.clipboard?.read) {
+        try {
+          const items = await navigator.clipboard.read();
+          for (const item of items) {
+            if (item.types.includes('text/html')) {
+              clipboardText = subtitleRowsFromHtml(await (await item.getType('text/html')).text());
+              if (clipboardText) break;
+            }
+          }
+        } catch {
+          // Fall back to plain text when rich clipboard permission is unavailable.
+        }
+      }
+      if (!clipboardText && navigator.clipboard?.readText) clipboardText = await navigator.clipboard.readText();
+      if (!clipboardText.trim()) throw new Error('剪贴板没有可识别的字幕表格。请直接粘贴文字稿，或导入插件导出的 HTML 文件。');
       const normalized = normalizeTranscriptForImport(clipboardText);
       setRawSubtitlePaste(normalized);
       setEditorSubtitles(parseRawTextToSubtitles(normalized));
@@ -3369,7 +3409,9 @@ export default function MaterialsLibrary({
                               rows={16}
                               value={rawSubtitlePaste}
                               onPaste={(event) => {
-                                const pasted = event.clipboardData.getData('text/plain');
+                                const html = event.clipboardData.getData('text/html');
+                                const richText = html ? subtitleRowsFromHtml(html) : '';
+                                const pasted = richText || event.clipboardData.getData('text/plain');
                                 if (!pasted) return;
                                 event.preventDefault();
                                 const normalized = normalizeTranscriptForImport(pasted);

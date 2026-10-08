@@ -690,7 +690,18 @@ ${rawText}
     });
 
     const parsed = safeJSONParse(response.text);
-    res.json(parsed);
+    if (!Array.isArray(parsed?.subtitles) || parsed.subtitles.length === 0) {
+      return res.status(502).json({ error: '文本模型没有返回 subtitles 字幕数组。请检查当前文本模型的 JSON 输出能力，或在账号设置中切换支持结构化 JSON 输出的模型；原字幕未修改。' });
+    }
+    const invalidSubtitle = parsed.subtitles.some((subtitle: any) =>
+      !subtitle || typeof subtitle.text !== 'string' || !subtitle.text.trim()
+      || !Number.isFinite(Number(subtitle.start)) || !Number.isFinite(Number(subtitle.end))
+      || Number(subtitle.end) <= Number(subtitle.start)
+    );
+    if (invalidSubtitle) {
+      return res.status(502).json({ error: '文本模型返回的字幕缺少有效 text/start/end 字段。请重试或切换支持 JSON 输出的文本模型；原字幕未修改。' });
+    }
+    res.json({ ...parsed, subtitles: parsed.subtitles.map((subtitle: any) => ({ ...subtitle, start: Number(subtitle.start), end: Number(subtitle.end) })) });
   } catch (error: any) {
     console.error('Error in align-subtitles:', error);
     res.status(error.code === 'LLM_NOT_CONFIGURED' ? 403 : 500).json({ error: error.message ||'AI alignment failed' });

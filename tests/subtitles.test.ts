@@ -26,6 +26,15 @@ test('import normalization removes timestamped music rows without leaking their 
   assert.equal(normalized, '[616-630] Let\'s start.\n[630-633] This is the next line.');
 });
 
+test('import normalization recovers flattened transcript table rows and drops machine translation', () => {
+  const pasted = 'Living Alone vlog Time Subtitle Machine Translation 0s It\'s 5:59 and I\'m just waiting outside the shops for it to open. Tada! 7s How\'m I going to make the best baby ever under an hour [music] and be at work on 11s time. >> Three, two, one. Smile.';
+  const normalized = normalizeTranscriptForImport(pasted);
+  assert.match(normalized, /^\[0-7\] It\'s 5:59 and I\'m just waiting outside the shops for it to open\. Tada!/);
+  assert.match(normalized, /\[7-11\] How\'m I going to make the best baby ever under an hour and be at work on/);
+  assert.match(normalized, /\[11-14\] time\. >> Three, two, one\. Smile\./);
+  assert.doesNotMatch(normalized, /Machine Translation|\[music\]/i);
+});
+
 test('ASR subtitle refinement groups adjacent cues using model indexes and preserves source text and times', async () => {
   let prompt = '';
   const llm: any = { models: { generateContent: async (params: any) => {
