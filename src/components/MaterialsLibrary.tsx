@@ -3402,6 +3402,10 @@ export default function MaterialsLibrary({
                                   <input type="file" accept=".html,.htm,text/html" className="hidden" onChange={handleHtmlSubtitleImport} />
                                   导入字幕 HTML
                                 </label>
+                                <label className={`shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-950 transition hover:bg-emerald-100 ${isParsingExcel ? 'cursor-wait opacity-60' : 'cursor-pointer'}`}>
+                                  <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={isParsingExcel} onChange={handleExcelImport} />
+                                  {isParsingExcel ? '正在导入…' : '导入 Excel 字幕'}
+                                </label>
                               </div>
                             </div>
                             <p className="text-[10px] leading-relaxed text-stone-500">插件导出包含 Time / Subtitle / Machine Translation 表格的 HTML 时，可直接导入；文件只在本机浏览器解析。</p>
