@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { anchorSubtitleTimes, alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime } from '../src/lib/subtitles';
 import { cleanAsrSubtitleCues, refineAsrSubtitles } from '../server/lib/subtitleRefinement';
-import { balanceSubtitleCueGroups } from '../server/lib/subtitleSheetGrouping';
+import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from '../server/lib/subtitleSheetGrouping';
 
 test('highlight follows media time after speed changes, seeks, and silent gaps', () => {
   const cues = [{ id: 'a', start: 1, end: 3, text: 'A' }, { id: 'b', start: 3, end: 5, text: 'B' }, { id: 'c', start: 8, end: 10, text: 'C' }];
@@ -112,4 +112,18 @@ test('spreadsheet cue balancing splits oversized captions and joins nearby tiny 
   assert.ok(groups.some(group => group.includes(3) && group.includes(4) && group.includes(5)));
   assert.ok(groups.every(group => group.length === 1 || cues[group.at(-1)!].time - cues[group[0]].time <= 9));
   assert.equal(groups.at(-1)?.length, 1, 'long pauses must remain boundaries');
+});
+
+test('spreadsheet sentence splitting reconnects phrases that cross exported cue rows', () => {
+  const source = [
+    { time: 26, text: 'pull-up and two pressups. Then I engage in a trifecta of dental', translation: '引体向上和两个俯卧撑。然后我进行三项口腔' },
+    { time: 33, text: 'hygiene. One, brush teeth. Two, floss. Three,', translation: '卫生护理。第一，刷牙。第二，使用牙线。第三，' },
+    { time: 40, text: 'mouthwash. I boil the kettle, pour the milk in the mug, and sit down', translation: '漱口水。我烧开水，把牛奶倒进杯子里，然后坐下来' },
+  ];
+  const cues = splitSubtitleSheetCues(source);
+  const groups = balanceSubtitleCueGroups([cues.map((_cue, index) => index)], cues);
+  const captions = groups.map(group => group.map(index => cues[index].text).join(' '));
+  assert.ok(captions.some(text => /trifecta of dental hygiene\./.test(text)));
+  assert.ok(captions.some(text => /Three, mouthwash\./.test(text)));
+  assert.equal(groups.flat().length, cues.length);
 });

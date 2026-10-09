@@ -19,7 +19,7 @@ import { assertSafeHttpUrl } from './server/lib/net';
 import { downloadYoutubeAudio, youtubeVideoId } from './server/lib/youtubeAudio';
 import { splitAudio, parallelTranscribe, type ASRResult } from './server/lib/parallelAsr';
 import { transcribeQwenFile } from './server/lib/qwenAsr';
-import { balanceSubtitleCueGroups } from './server/lib/subtitleSheetGrouping';
+import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from './server/lib/subtitleSheetGrouping';
 import { cleanAsrSubtitleCues, refineAsrSubtitles } from './server/lib/subtitleRefinement';
 import { createServer as createViteServer } from 'vite';
 import { createRequire } from 'module';
@@ -645,10 +645,12 @@ app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
     rows.sort((a, b) => a.time - b.time);
     if (!rows.length) return res.status(400).json({ error: '没有识别到字幕行，请检查 Time、Subtitle 列。' });
     if (rows.length > 500) return res.status(400).json({ error: '最多支持 500 条字幕，请拆分文件。' });
+    const sourceCueCount = rows.length;
+    const segmentedRows = splitSubtitleSheetCues(rows);
     const ai = await getLLMClientForRequest(req);
     const allGroups: number[][] = [];
-    for (let offset = 0; offset < rows.length; offset += 60) {
-      const batch = rows.slice(offset, offset + 60);
+    for (let offset = 0; offset < segmentedRows.length; offset += 60) {
+      const batch = segmentedRows.slice(offset, offset + 60);
       const prompt = `只把相邻字幕碎片合并成易读、适合跟读的句子。必须返回 JSON {"groups":[[0,1],[2],[3,4]]}，数字是局部行号；每个行号必须按顺序恰好出现一次，且每组连续。通常每组 5-18 个英文词，最多 24 词；时间间隔超过 8 秒不得合并。不要改写字幕或输出时间。\n${JSON.stringify(batch.map((r, i) => ({ i, time: r.time, text: r.text })))}`;
       const response = await ai.models.generateContent({ model: 'gemini-3.6-flash', contents: prompt, config: { responseMimeType: 'application/json', responseSchema: { type: Type.OBJECT, properties: { groups: { type: Type.ARRAY, items: { type: Type.ARRAY, items: { type: Type.NUMBER } } } }, required: ['groups'] } } });
       const candidate = safeJSONParse(response.text)?.groups as number[][];
@@ -656,15 +658,16 @@ app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
       if (!Array.isArray(candidate) || flattened.length !== batch.length || flattened.some((n, i) => n !== i) || candidate.some(g => !Array.isArray(g) || !g.length)) throw new Error('AI 分段未完整覆盖字幕，原始字幕未修改。请重试。');
       allGroups.push(...candidate.map(g => g.map(i => i + offset)));
     }
-    const balancedGroups = balanceSubtitleCueGroups(allGroups, rows);
+    const balancedGroups = balanceSubtitleCueGroups(allGroups, segmentedRows);
     const subtitles = balancedGroups.map((group, i) => {
-      const first = rows[group[0]], last = rows[group[group.length - 1]], next = rows[group[group.length]];
+      const first = segmentedRows[group[0]], last = segmentedRows[group[group.length - 1]], next = segmentedRows[group[group.length]];
       const gap = next ? next.time - last.time : 4;
       const estimatedEnd = last.time + Math.max(1.2, Math.min(4, gap * 0.75));
-      const end = Math.max(first.time + 0.6, Math.min(first.time + 11, estimatedEnd));
-      return { id: `sheet-${Date.now()}-${i}`, start: first.time, end, text: group.map(n => rows[n].text).join(' ').replace(/\s+([,.!?;:])/g, '$1'), translation: group.map(n => rows[n].translation).filter(Boolean).join('') };
+      const nextGroupStart = balancedGroups[i + 1] ? segmentedRows[balancedGroups[i + 1][0]].time : Infinity;
+      const end = Math.max(first.time + 0.1, Math.min(first.time + 11, estimatedEnd, nextGroupStart));
+      return { id: `sheet-${Date.now()}-${i}`, start: first.time, end, text: group.map(n => segmentedRows[n].text).join(' ').replace(/\s+([,.!?;:])/g, '$1'), translation: group.map(n => segmentedRows[n].translation).filter(Boolean).join('') };
     });
-    res.json({ success: true, sourceCueCount: rows.length, subtitles });
+    res.json({ success: true, sourceCueCount, subtitles });
   } catch (error: any) {
     console.error('Error importing subtitle sheet:', error);
     res.status(error.code === 'LLM_NOT_CONFIGURED' ? 403 : 500).json({ error: error.message || '字幕表格导入失败。' });

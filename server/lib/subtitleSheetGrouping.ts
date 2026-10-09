@@ -3,7 +3,7 @@ export type SubtitleSheetCue = { time: number; text: string; translation: string
 const TARGET_MIN_WORDS = 5;
 const TARGET_MAX_WORDS = 18;
 const MAX_SPAN_SECONDS = 9;
-const MAX_GAP_SECONDS = 5;
+const MAX_GAP_SECONDS = 8;
 
 function wordCount(text: string): number {
   return text.match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)?.length || 0;
@@ -39,11 +39,14 @@ export function balanceSubtitleCueGroups(groups: number[][], cues: SubtitleSheet
     const previous = current.length ? cues[current[current.length - 1]] : null;
     const count = current.reduce((sum, index) => sum + wordCount(cues[index].text), 0);
     const nextCount = wordCount(cue.text);
-    const sentenceEnded = previous && /[.!?]["'”’)]*$/.test(previous.text.trim()) && count >= 7;
+    const previousEndsSentence = previous && /[.!?]["'”’)]*$/.test(previous.text.trim());
+    const naturalPause = previous && /[,;:]["'”’)]*$/.test(previous.text.trim()) && count >= TARGET_MAX_WORDS;
+    const sentenceEnded = previousEndsSentence && count >= 7;
     const mustSplit = current.length > 0 && (
-      count + nextCount > TARGET_MAX_WORDS
-      || cue.time - cues[current[0]].time > MAX_SPAN_SECONDS
-      || (previous !== null && cue.time - previous.time > MAX_GAP_SECONDS)
+      (count + nextCount > TARGET_MAX_WORDS && previousEndsSentence)
+      || (cue.time - cues[current[0]].time > MAX_SPAN_SECONDS && previousEndsSentence)
+      || (previous !== null && cue.time - previous.time > MAX_GAP_SECONDS && previousEndsSentence)
+      || naturalPause
       || sentenceEnded
     );
     if (mustSplit) {
@@ -77,4 +80,28 @@ export function balanceSubtitleCueGroups(groups: number[][], cues: SubtitleSheet
     }
   }
   return balanced;
+}
+
+/** Split multi-sentence cells first so a cue boundary cannot leave half a sentence on each card. */
+export function splitSubtitleSheetCues(input: SubtitleSheetCue[]): SubtitleSheetCue[] {
+  return input.flatMap((cue, index) => {
+    const sentences = cue.text.trim().split(/(?<=[.!?])\s+(?=[A-Z0-9"'“‘])/u).map(part => part.trim()).filter(Boolean);
+    if (sentences.length < 2) return [cue];
+    const translated = cue.translation.split(/(?<=[。！？])\s*/u).map(part => part.trim()).filter(Boolean);
+    const totalWords = sentences.reduce((sum, sentence) => sum + wordCount(sentence), 0) || sentences.length;
+    const nextTime = input[index + 1]?.time;
+    const available = nextTime !== undefined && nextTime > cue.time ? nextTime - cue.time : 0;
+    const speechSpan = Math.min(available, totalWords / 2.5);
+    let elapsedWords = 0;
+    return sentences.map((sentence, sentenceIndex) => {
+      const sentenceWords = wordCount(sentence) || 1;
+      const time = cue.time + speechSpan * elapsedWords / totalWords;
+      elapsedWords += sentenceWords;
+      return {
+        time,
+        text: sentence,
+        translation: translated.length === sentences.length ? translated[sentenceIndex] : sentenceIndex === 0 ? cue.translation : '',
+      };
+    });
+  });
 }
