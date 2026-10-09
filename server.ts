@@ -660,7 +660,8 @@ app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
     const subtitles = balancedGroups.map((group, i) => {
       const first = rows[group[0]], last = rows[group[group.length - 1]], next = rows[group[group.length]];
       const gap = next ? next.time - last.time : 4;
-      const end = Math.max(first.time + 0.6, last.time + Math.max(1.2, Math.min(4, gap * 0.75)));
+      const estimatedEnd = last.time + Math.max(1.2, Math.min(4, gap * 0.75));
+      const end = Math.max(first.time + 0.6, Math.min(first.time + 11, estimatedEnd));
       return { id: `sheet-${Date.now()}-${i}`, start: first.time, end, text: group.map(n => rows[n].text).join(' ').replace(/\s+([,.!?;:])/g, '$1'), translation: group.map(n => rows[n].translation).filter(Boolean).join('') };
     });
     res.json({ success: true, sourceCueCount: rows.length, subtitles });
