@@ -19,6 +19,7 @@ import { assertSafeHttpUrl } from './server/lib/net';
 import { downloadYoutubeAudio, youtubeVideoId } from './server/lib/youtubeAudio';
 import { splitAudio, parallelTranscribe, type ASRResult } from './server/lib/parallelAsr';
 import { transcribeQwenFile } from './server/lib/qwenAsr';
+import { balanceSubtitleCueGroups } from './server/lib/subtitleSheetGrouping';
 import { cleanAsrSubtitleCues, refineAsrSubtitles } from './server/lib/subtitleRefinement';
 import { createServer as createViteServer } from 'vite';
 import { createRequire } from 'module';
@@ -655,7 +656,8 @@ app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
       if (!Array.isArray(candidate) || flattened.length !== batch.length || flattened.some((n, i) => n !== i) || candidate.some(g => !Array.isArray(g) || !g.length)) throw new Error('AI 分段未完整覆盖字幕，原始字幕未修改。请重试。');
       allGroups.push(...candidate.map(g => g.map(i => i + offset)));
     }
-    const subtitles = allGroups.map((group, i) => {
+    const balancedGroups = balanceSubtitleCueGroups(allGroups, rows);
+    const subtitles = balancedGroups.map((group, i) => {
       const first = rows[group[0]], last = rows[group[group.length - 1]], next = rows[group[group.length]];
       const gap = next ? next.time - last.time : 4;
       const end = Math.max(first.time + 0.6, last.time + Math.max(1.2, Math.min(4, gap * 0.75)));

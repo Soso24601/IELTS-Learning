@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { anchorSubtitleTimes, alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime } from '../src/lib/subtitles';
 import { cleanAsrSubtitleCues, refineAsrSubtitles } from '../server/lib/subtitleRefinement';
+import { balanceSubtitleCueGroups } from '../server/lib/subtitleSheetGrouping';
 
 test('highlight follows media time after speed changes, seeks, and silent gaps', () => {
   const cues = [{ id: 'a', start: 1, end: 3, text: 'A' }, { id: 'b', start: 3, end: 5, text: 'B' }, { id: 'c', start: 8, end: 10, text: 'C' }];
@@ -94,4 +95,21 @@ test('long transcripts are batched with absolute timestamps and actionable confi
     globalThis.fetch = async () => Response.json({ error: 'LLM_NOT_CONFIGURED' }, { status: 403 });
     await assert.rejects(alignSubtitleBatches(lines[0], 10, () => {}), /文本 AI 模型/);
   } finally { globalThis.fetch = original; }
+});
+
+test('spreadsheet cue balancing splits oversized captions and joins nearby tiny fragments', () => {
+  const cues = [
+    { time: 0, text: 'This is the first short part', translation: '' },
+    { time: 1, text: 'of a sentence that continues', translation: '' },
+    { time: 2, text: 'and now it ends.', translation: '' },
+    { time: 3, text: 'Okay.', translation: '' },
+    { time: 3.8, text: 'Okay.', translation: '' },
+    { time: 5, text: 'Here is a completely separate sentence with several words.', translation: '' },
+    { time: 28, text: 'A new thought begins after a long pause.', translation: '' },
+  ];
+  const groups = balanceSubtitleCueGroups([cues.map((_cue, index) => index)], cues);
+  assert.deepEqual(groups.flat(), cues.map((_cue, index) => index));
+  assert.ok(groups.some(group => group.includes(3) && group.includes(4) && group.includes(5)));
+  assert.ok(groups.every(group => group.length === 1 || cues[group.at(-1)!].time - cues[group[0]].time <= 9));
+  assert.equal(groups.at(-1)?.length, 1, 'long pauses must remain boundaries');
 });
