@@ -10,6 +10,7 @@ export interface PublicUser {
   llmConfigured: boolean;
   llmProvider: string | null;
   llmModel: string | null;
+  isAdmin?: boolean;
 }
 
 export class ApiError extends Error {
@@ -89,16 +90,29 @@ export function apiTestLLM(body: {
 }): Promise<{ ok: boolean; reply: string }> {
   return req('/api/me/llm/test', json(body));
 }
-export interface ASRSummary {
-  configured: boolean;
-  provider: 'aliyun' | null;
-  region: 'beijing' | 'singapore';
+export interface SharedMaterialCatalog {
+  folders: Array<{ id: string; name: string; category: string; createdAt?: string }>;
+  materials: Array<Record<string, any>>;
 }
-export function apiGetASR(): Promise<ASRSummary> {
-  return req('/api/me/asr');
+
+export function apiGetMaterialCatalog(): Promise<SharedMaterialCatalog> {
+  return req('/api/catalog/materials');
 }
-export function apiSaveASR(body: { apiKey: string; region: 'beijing' | 'singapore' }): Promise<ASRSummary & { ok: boolean }> {
-  return req('/api/me/asr', json(body));
+
+export function apiSaveSharedMaterial(material: Record<string, any>): Promise<{ ok: boolean }> {
+  return req('/api/admin/materials', { method: 'PUT', body: JSON.stringify({ material }) });
+}
+
+export function apiDeleteSharedMaterial(id: string): Promise<{ ok: boolean }> {
+  return req(`/api/admin/materials/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function apiImportSharedMaterials(materials: any[], folders: any[]): Promise<{ ok: boolean; imported: number; skipped: number }> {
+  return req('/api/admin/materials/import', json({ materials, folders }));
+}
+
+export function apiSaveSharedFolders(folders: any[]): Promise<{ ok: boolean }> {
+  return req('/api/admin/materials/folders', { method: 'PUT', body: JSON.stringify({ folders }) });
 }
 
 /** 把后端错误信息转成对用户友好的中文提示。 */

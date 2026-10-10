@@ -152,7 +152,15 @@ export function publicUserShape(uid: number) {
     llmConfigured,
     llmProvider,
     llmModel,
+    isAdmin: isAdminUser(uid),
   };
+}
+
+/** Admin access is granted only to the configured account username. */
+export function isAdminUser(uid: number): boolean {
+  const configuredUsername = (process.env.ADMIN_USERNAME || '').trim().toLocaleLowerCase();
+  const user = configuredUsername ? findUserById(uid) : undefined;
+  return !!user && user.username.toLocaleLowerCase() === configuredUsername;
 }
 
 export function registerUser(opts: {

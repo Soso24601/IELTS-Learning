@@ -35,117 +35,9 @@ import {
   EyeOff,
   Search
 } from 'lucide-react';
-import { alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime, subtitlesToOriginalTranscript } from '../lib/subtitles';
-import { parseSubtitleSheetRows } from '../lib/subtitleSheet';
-import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder, MaterialType } from '../types';
-
-function subtitleRowsFromHtml(html: string): string {
-  const document = new DOMParser().parseFromString(html, 'text/html');
-  const rows: Array<{ time: number; text: string; translation: string }> = [];
-  for (const row of Array.from(document.querySelectorAll('tr'))) {
-    const cells = Array.from(row.querySelectorAll('th,td')).map(cell => (cell.textContent || '').replace(/\s+/g, ' ').trim());
-    const timeIndex = cells.findIndex(cell => /^(?:(?:(?:\d{1,2}:)?\d{1,2}:\d{2})(?:\.\d+)?|\d+(?:\.\d+)?\s*s)$/i.test(cell));
-    if (timeIndex < 0) continue;
-    const match = cells[timeIndex].match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?\s*$/)
-      || cells[timeIndex].match(/^(\d+(?:\.\d+)?)\s*s$/i);
-    if (!match) continue;
-    const time = match[2] !== undefined
-      ? Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(`0.${match[4] || 0}`)
-      : Number(match[1]);
-    const content = cells.filter((_cell, index) => index !== timeIndex);
-    const english = content.find(cell => /[a-z]/i.test(cell));
-    if (!english) continue;
-    const translation = content.find(cell => /[\u3400-\u9fff]/.test(cell)) || '';
-    const cleanText = cleanMusicCue(english);
-    if (cleanText) rows.push({ time, text: cleanText, translation: cleanMusicCue(translation) });
-  }
-  return rows.map((row, index) => {
-    const next = rows[index + 1]?.time;
-    const end = next !== undefined && next > row.time ? next : row.time + 3;
-    return `[${row.time}-${end}] ${row.text}${row.translation ? ` | ${row.translation}` : ''}`;
-  }).join('\n');
-}
-
-
-async function parseSubtitleSpreadsheetLocally(file: File) {
-  const XLSX = await import('xlsx');
-  const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: false });
-  for (const sheetName of workbook.SheetNames) {
-    const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: false }) as unknown[][];
-    try {
-      return parseSubtitleSheetRows(matrix);
-    } catch {
-      // Try another sheet in case the first one is a cover or metadata sheet.
-    }
-  }
-  throw new Error('没有找到可识别的字幕工作表。请确认表格有 Time、Subtitle 列。');
-}
-
-async function requestSubtitleSpreadsheetImport(file: File, duration: number) {
-  let apiError = '服务器暂不可用';
-  try {
-    const readerResult = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = event => typeof event.target?.result === 'string' ? resolve(event.target.result) : reject(new Error('读取文件失败'));
-      reader.onerror = () => reject(new Error('读取文件失败'));
-      reader.readAsDataURL(file);
-    });
-    const response = await fetch('/api/materials/parse-subtitle-sheet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base64: readerResult.split(',')[1], fileName: file.name, duration }),
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `服务器返回 ${response.status}`);
-    if (!result.success || !Array.isArray(result.subtitles) || !result.subtitles.length) throw new Error('服务器没有返回有效字幕');
-    return { subtitles: result.subtitles, sourceCueCount: result.sourceCueCount, usedLocalFallback: false };
-  } catch (error: any) {
-    apiError = error?.message || apiError;
-  }
-
-  const subtitles = await parseSubtitleSpreadsheetLocally(file);
-  return { subtitles, sourceCueCount: subtitles.length, usedLocalFallback: true, apiError };
-}
-// --- IndexedDB for persistent audio files storage ---
-const dbPromise = typeof window !== 'undefined' ? new Promise<IDBDatabase>((resolve, reject) => {
-  const request = indexedDB.open('ielts_audio_db', 1);
-  request.onupgradeneeded = () => {
-    request.result.createObjectStore('audios');
-  };
-  request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error);
-}) : null;
-
-async function saveAudio(id: string, base64: string, mimeType: string) {
-  if (typeof window === 'undefined') return;
-  const db = await dbPromise;
-  if (!db) return;
-  const tx = db.transaction('audios', 'readwrite');
-  tx.objectStore('audios').put({ base64, mimeType }, id);
-  return new Promise((resolve) => (tx.oncomplete = resolve));
-}
-
-async function getAudio(id: string): Promise<{ base64: string, mimeType: string } | null> {
-  if (typeof window === 'undefined') return null;
-  const db = await dbPromise;
-  if (!db) return null;
-  const tx = db.transaction('audios', 'readonly');
-  const req = tx.objectStore('audios').get(id);
-  return new Promise((resolve) => {
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => resolve(null);
-  });
-}
-
-async function deleteAudio(id: string) {
-  if (typeof window === 'undefined') return;
-  const db = await dbPromise;
-  if (!db) return;
-  const tx = db.transaction('audios', 'readwrite');
-  tx.objectStore('audios').delete(id);
-  return new Promise((resolve) => (tx.oncomplete = resolve));
-}
-// ----------------------------------------------------
+import { subtitleAtTime } from '../lib/subtitles';
+import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder } from '../types';
+import { apiGetMaterialCatalog } from '../lib/authApi';
 
 export interface TextAnnotation {
   id: string;
@@ -167,65 +59,6 @@ interface MaterialsLibraryProps {
   onClearInitialWord?: () => void;
 }
 
-// Initial Preset Folders and Materials to make the workspace look alive immediately!
-const PRESET_FOLDERS: MaterialFolder[] = [
-  { id: 'f1', name: 'Cambridge 18 Academic Test 1', category: 'reading', createdAt: new Date().toISOString() },
-  { id: 'f2', name: 'Task 2 High-Scoring Essays', category: 'writing', createdAt: new Date().toISOString() },
-  { id: 'f3', name: 'Part 3 Abstract Discussions', category: 'speaking', createdAt: new Date().toISOString() },
-  { id: 'f4', name: 'Section 4 Academic Lecture', category: 'listening', createdAt: new Date().toISOString() }
-];
-
-const PRESET_MATERIALS: StudyMaterial[] = [
-  {
-    id: 'm1',
-    name: 'The Impact of Climate Change on Cities',
-    type: 'document',
-    category: 'reading',
-    folderId: 'f1',
-    content: 'Global temperatures are rising at an unprecedented rate, posing immediate threats to low-lying coastal urban areas. To mitigate these risks, municipal governments must transition to sustainable infrastructure. Empirical evidence suggests that green roofs and solar panels can substantially reduce energy consumption and alleviate heat-island effects in metropolitan regions. However, the initial capital expenditure remains a major barrier for many developing countries, calling for international funding and financial support.',
-    notes: 'Important article for environmental topics! Key word: mitigate, empirical, alleviate.',
-    timestamp: new Date().toISOString()
-  },
-  {
-    id: 'm2',
-    name: 'IELTS Writing Task 2 Model Essay',
-    type: 'document',
-    category: 'writing',
-    folderId: 'f2',
-    content: 'In modern society, some argue that the rapid development of artificial intelligence will make human labor obsolete. Personally, I advocate a more balanced view. While AI will certainly automate repetitive tasks, it will also facilitate the creation of high-skilled jobs. Therefore, governments should focus on reskilling the workforce to adapt to this new economic paradigm rather than trying to restrict technological innovation. In conclusion, AI is an empowering tool rather than a threat.',
-    notes: 'High-scoring phrase: "balanced view", "obsolete", "economic paradigm". Use these in my next essay!',
-    timestamp: new Date().toISOString()
-  },
-  {
-    id: 'm3',
-    name: 'Speaking Part 3 - Technological Influence',
-    type: 'link',
-    category: 'speaking',
-    folderId: 'f3',
-    url: 'https://ielts.org/speaking-practice',
-    content: 'Examiner: How has technology changed the way children learn in schools?\n\nCandidate: Well, in my view, technology has completely revolutionised modern classrooms. The integration of interactive tablets and educational software allows students to learn at their own pace, fostering independent thinking. Moreover, online resources provide unprecedented access to global databases, meaning children are no longer limited by their school library. However, we must ensure technology does not become a distraction, and screen time is kept within healthy limits.',
-    notes: 'Good vocabulary used: revolutionised, fostering independent thinking, unprecedented access.',
-    timestamp: new Date().toISOString()
-  },
-  {
-    id: 'm4',
-    name: 'Section 4 - Renewable Energy Lecture',
-    type: 'audio',
-    category: 'listening',
-    folderId: 'f4',
-    content: 'Welcome to today\'s university lecture on modern architecture. Today we will discuss the implications of renewable energy in urban design. Many cities are struggling to implement solar panels on historical buildings due to strict regulations. To foster wider adoption, engineering solutions must align with aesthetic standards. This ensures historical landmarks maintain their traditional charm while contributing to global sustainability goals.',
-    notes: 'Dictation practice was hard! "implications", "implement", "regulations". Need to master spellings!',
-    sentences: [
-      "Welcome to today's university lecture on modern architecture.",
-      "Today we will discuss the implications of renewable energy in urban design.",
-      "Many cities are struggling to implement solar panels on historical buildings due to strict regulations.",
-      "To foster wider adoption, engineering solutions must align with aesthetic standards.",
-      "This ensures historical landmarks maintain their traditional charm while contributing to global sustainability goals."
-    ],
-    timestamp: new Date().toISOString()
-  }
-];
-
 export default function MaterialsLibrary({ 
   vocabulary, 
   onAddCustomWord,
@@ -245,20 +78,12 @@ export default function MaterialsLibrary({
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
   
   // Modal / Inputs State
-  const [isNewFolderOpen, setIsNewFolderOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState('');
   
-  const [isNewMaterialOpen, setIsNewMaterialOpen] = useState(false);
-  const [newMatName, setNewMatName] = useState('');
-  const [newMatType, setNewMatType] = useState<MaterialType>('document');
-  const [newMatUrl, setNewMatUrl] = useState('');
-  const [newMatContent, setNewMatContent] = useState('');
   
   // Study Panel States
   const [notes, setNotes] = useState('');
   const [aiSummary, setAiSummary] = useState<any | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
-  const [isParsingFile, setIsParsingFile] = useState(false);
   
   // Quick Add Word State
   const [quickWord, setQuickWord] = useState('');
@@ -299,8 +124,6 @@ export default function MaterialsLibrary({
   const [speakingReadingMode, setSpeakingReadingMode] = useState<'bilingual' | 'continuous'>('bilingual');
 
   // Audio specific UI and persistent player States
-  const [activeAudioUrl, setActiveAudioUrl] = useState<string>('');
-  const [showAudioTranscript, setShowAudioTranscript] = useState<boolean>(true);
 
   // Document Text-to-Speech (TTS) Reader States
   const [isTtsPlaying, setIsTtsPlaying] = useState(false);
@@ -311,8 +134,6 @@ export default function MaterialsLibrary({
 
   // Video and Subtitle Study Player States
   const [videoCurrentTime, setVideoCurrentTime] = useState<number>(0);
-  const [isCrawlingVideo, setIsCrawlingVideo] = useState<boolean>(false);
-  const [crawlNotice, setCrawlNotice] = useState<string>('');
   const [activeSubtitleId, setActiveSubtitleId] = useState<string | null>(null);
   const [isAutoSyncSubtitles, setIsAutoSyncSubtitles] = useState<boolean>(true);
   const [youtubeSyncStatus, setYoutubeSyncStatus] = useState<'connecting' | 'ready' | 'unavailable'>('connecting');
@@ -334,16 +155,7 @@ export default function MaterialsLibrary({
   }, [isAutoSyncSubtitles]);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   
-  const [tempAudioBase64, setTempAudioBase64] = useState<string>('');
-  const [tempAudioMimeType, setTempAudioMimeType] = useState<string>('');
-
-  const skipAudio = (seconds: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = Math.max(0, Math.min(audioRef.current.duration || 0, audioRef.current.currentTime + seconds));
-    }
-  };
 
   const subtitlesContainerRef = useRef<HTMLDivElement | null>(null);
   const [localDictationId, setLocalDictationId] = useState<string | null>(null);
@@ -352,25 +164,8 @@ export default function MaterialsLibrary({
   const [localDictationChecked, setLocalDictationChecked] = useState<boolean>(false);
 
   // Subtitle Editor state variables
-  const [isSubtitleEditorOpen, setIsSubtitleEditorOpen] = useState(false);
-  const [editorSubtitles, setEditorSubtitles] = useState<any[]>([]);
-  const [rawSubtitlePaste, setRawSubtitlePaste] = useState('');
-  const [isAligningWithAI, setIsAligningWithAI] = useState(false);
-  const [alignmentProgress, setAlignmentProgress] = useState('');
-  const alignTranscript = () => alignSubtitleBatches(normalizeTranscriptForImport(rawSubtitlePaste), maxSubtitleTime || 120, (done, total) => setAlignmentProgress(`AI 分段：${done}/${total} 批`));
-  const [globalTimeShift, setGlobalTimeShift] = useState(0);
-  const [editorTab, setEditorTab] = useState<'paste' | 'shift' | 'excel'>('excel');
-  const [isTranscribingMedia, setIsTranscribingMedia] = useState(false);
-  const [transcribingMediaMessage, setTranscribingMediaMessage] = useState('正在上传音视频…');
-  const [ccVideoUrl, setCcVideoUrl] = useState('');
-  const [isParsingExcel, setIsParsingExcel] = useState(false);
-  const mediaFileInputRef = useRef<HTMLInputElement | null>(null);
-  const replaceAudioFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Material rename modal state
-  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
-  const [renamingMaterialId, setRenamingMaterialId] = useState<string | null>(null);
-  const [renamingMaterialName, setRenamingMaterialName] = useState('');
 
   // Embed Player Simulation States & Helpers
   const [iframeSrc, setIframeSrc] = useState<string>('');
@@ -681,22 +476,36 @@ export default function MaterialsLibrary({
     updateVoices();
     window.speechSynthesis.onvoiceschanged = updateVoices;
 
-    const storedFolders = localStorage.getItem('ielts_material_folders');
-    const storedMaterials = localStorage.getItem('ielts_material_files');
-    
-    if (storedFolders) {
-      try { setFolders(JSON.parse(storedFolders)); } catch (e) { console.error(e); }
-    } else {
-      setFolders(PRESET_FOLDERS);
-      localStorage.setItem('ielts_material_folders', JSON.stringify(PRESET_FOLDERS));
+    // Keep a one-time snapshot for admin migration before any personal-note writes
+    // can replace the legacy local material array.
+    if (localStorage.getItem('ielts_shared_catalog_loaded') !== 'true') {
+      if (!localStorage.getItem('ielts_legacy_material_migration_backup')) {
+        const legacyMaterials = localStorage.getItem('ielts_material_files');
+        if (legacyMaterials) localStorage.setItem('ielts_legacy_material_migration_backup', legacyMaterials);
+      }
+      if (!localStorage.getItem('ielts_legacy_folder_migration_backup')) {
+        const legacyFolders = localStorage.getItem('ielts_material_folders');
+        if (legacyFolders) localStorage.setItem('ielts_legacy_folder_migration_backup', legacyFolders);
+      }
     }
-    
-    if (storedMaterials) {
-      try { setMaterials(JSON.parse(storedMaterials)); } catch (e) { console.error(e); }
-    } else {
-      setMaterials(PRESET_MATERIALS);
-      localStorage.setItem('ielts_material_files', JSON.stringify(PRESET_MATERIALS));
-    }
+
+    // Learning materials are published by admins and read from the shared server catalog.
+    // Browser-local legacy materials are never used as a learner fallback.
+    void apiGetMaterialCatalog().then(catalog => {
+      const localMaterials: StudyMaterial[] = (() => {
+        try { return JSON.parse(localStorage.getItem('ielts_material_files') || '[]'); } catch { return []; }
+      })();
+      const byId = new Map(localMaterials.map(material => [material.id, material]));
+      const published = catalog.materials.map((material: any) => ({
+        ...material,
+        notes: byId.get(material.id)?.notes || '',
+      })) as StudyMaterial[];
+      setMaterials(published);
+      localStorage.setItem('ielts_material_files', JSON.stringify(published));
+      setFolders(catalog.folders as MaterialFolder[]);
+      localStorage.setItem('ielts_material_folders', JSON.stringify(catalog.folders));
+      localStorage.setItem('ielts_shared_catalog_loaded', 'true');
+    }).catch(error => console.warn('Could not load shared study materials:', error));
   }, []);
 
   // Handle source word traceback navigation/selection
@@ -1402,60 +1211,12 @@ export default function MaterialsLibrary({
       setNotes(activeMaterial.notes || '');
       setAiSummary(activeMaterial.summary ? JSON.parse(activeMaterial.summary) : null);
       
-      // Reconstruct local Blob URL from IndexedDB if the material is an audio type
-      if (activeMaterial.type === 'audio') {
-        setShowAudioTranscript(true); // default to show
-        getAudio(activeMaterial.id).then((audioRecord) => {
-          if (audioRecord) {
-            try {
-              const byteCharacters = atob(audioRecord.base64);
-              const byteNumbers = new Array(byteCharacters.length);
-              for (let i = 0; i < byteCharacters.length; i++) {
-                byteNumbers[i] = byteCharacters.charCodeAt(i);
-              }
-              const byteArray = new Uint8Array(byteNumbers);
-              const blob = new Blob([byteArray], { type: audioRecord.mimeType });
-              const localBlobUrl = URL.createObjectURL(blob);
-              setActiveAudioUrl(localBlobUrl);
-            } catch (err) {
-              console.error('Failed to reconstruct local audio blob url from IndexedDB:', err);
-              setActiveAudioUrl(activeMaterial.url || '');
-            }
-          } else {
-            setActiveAudioUrl(activeMaterial.url || '');
-          }
-        }).catch((err) => {
-          console.error('Error fetching audio from db:', err);
-          setActiveAudioUrl(activeMaterial.url || '');
-        });
-      } else {
-        setActiveAudioUrl('');
-      }
-
-      // Initialize sentence items for dictation if empty for audio
-      if (activeMaterial.type === 'audio' && (!activeMaterial.sentences || activeMaterial.sentences.length === 0)) {
-        // Automatically split text into sentences
-        const content = activeMaterial.content || '';
-        const rawSentences = content
-          .split(/(?<=[.!?])\s+/)
-          .filter(s => s.trim().length > 3);
-        
-        if (rawSentences.length > 0) {
-          setMaterials(prev => {
-            const updated = prev.map(m => m.id === activeMaterial.id ? { ...m, sentences: rawSentences } : m);
-            localStorage.setItem('ielts_material_files', JSON.stringify(updated));
-            return updated;
-          });
-        }
-      }
-      
       // Reset dictation progress
       setCurrentSentenceIndex(0);
       setUserDictationInput('');
       setDictationResult(null);
       setIsDictationMode(false);
     } else {
-      setActiveAudioUrl('');
     }
   }, [selectedMaterialId]);
 
@@ -1469,543 +1230,6 @@ export default function MaterialsLibrary({
         return updated;
       });
     }
-  };
-
-  // Import link (video embed / webpage real content). 不再让 AI 编造字幕/文稿
-  const handleCrawlVideo = async (material: StudyMaterial) => {
-    const linkToImport = material.url || material.content || '';
-    if (!linkToImport.trim()) {
-      alert('请先为该材料填写网页/视频链接。');
-      return;
-    }
-
-    setIsCrawlingVideo(true);
-    setCrawlNotice('');
-    try {
-      const response = await fetch('/api/materials/crawl-video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: linkToImport, category: activeCategory })
-      });
-
-      let result: any = null;
-      try { result = await response.json(); } catch { /* ignore non-json */ }
-
-      if (!response.ok || !result) {
-        throw new Error(result?.error || result?.message || '导入链接失败，请稍后重试');
-      }
-
-      const hasRealSubtitles = Array.isArray(result.subtitles) && result.subtitles.length > 0;
-
-      const updatedMaterials = materials.map((m) => {
-        if (m.id !== material.id) return m;
-        const base = {
-          ...m,
-          name: result.title && String(result.title).trim() ? String(result.title).trim() : m.name,
-        };
-        // 有可内嵌的真实视频地址 → 升级为视频材料并指向该地址（可能是解析后的 embed）
-        const withVideo = result.videoUrl
-          ? { ...base, url: String(result.videoUrl), type: 'video' as MaterialType }
-          : base;
-
-        if (hasRealSubtitles) {
-          // 真实字幕（目前仅 YouTube 官方 CC 可自动拿到）
-          return {
-            ...withVideo,
-            content: result.transcript || withVideo.content,
-            sentences: result.subtitles.map((s: any) => s.text),
-            videoSubtitles: result.subtitles,
-          };
-        }
-        // 普通网页抓到的真实正文：更新正文，但保持原有类型与字幕不动（不生成假字幕）
-        return result.videoUrl
-          ? withVideo
-          : { ...withVideo, content: result.transcript || withVideo.content };
-      });
-
-      setMaterials(updatedMaterials);
-      localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
-
-      // 有真实内容摘要时同步 AI 面板
-      if (result.summary || (Array.isArray(result.vocab) && result.vocab.length > 0)) {
-        setAiSummary({
-          summary: result.summary || '',
-          keyVocabulary: Array.isArray(result.vocab) ? result.vocab : [],
-          grammarPoints: [],
-          collocations: []
-        });
-      }
-
-      if (result.note) setCrawlNotice(String(result.note));
-      setSelectionState(null);
-    } catch (err: any) {
-      console.error('Import link error:', err);
-      alert((err && err.message) || '导入链接失败，请重试');
-    } finally {
-      setIsCrawlingVideo(false);
-    }
-  };
-
-  // Synchronize editor state when subtitle editor is opened
-  useEffect(() => {
-    if (isSubtitleEditorOpen && activeMaterial) {
-      setEditorSubtitles(activeMaterial.videoSubtitles ? JSON.parse(JSON.stringify(activeMaterial.videoSubtitles)) : []);
-      setRawSubtitlePaste(activeMaterial.videoSubtitles ? activeMaterial.videoSubtitles.map(s => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.text} | ${s.translation}`).join('\n') : '');
-      if (activeMaterial.url) {
-        setCcVideoUrl(activeMaterial.url);
-      }
-    }
-  }, [isSubtitleEditorOpen, activeMaterial]);
-
-  const receiveTranscription = async (jobId: string, materialId: string, startOffset = 0, clientTiming = '') => {
-      let result: any;
-      for (let attempt = 0; attempt < 360; attempt++) {
-        await new Promise((resolve) => window.setTimeout(resolve, 5000));
-        const statusResponse = await fetch(`/api/asr/transcribe-media/${encodeURIComponent(jobId)}`, { signal: AbortSignal.timeout(30000) });
-        const status = await statusResponse.json();
-        if (!statusResponse.ok) throw new Error(status.error || '读取转写进度失败');
-        if (status.message) setTranscribingMediaMessage(status.message);
-        if (status.status === 'failed') throw new Error(status.error || '百炼语音识别失败');
-        if (status.status === 'completed') {
-          result = status.result;
-          break;
-        }
-      }
-      if (!result) throw new Error('语音识别等待超时，请缩短视频片段后重试。');
-      if (!Array.isArray(result.subtitles) || result.subtitles.length === 0) {
-        throw new Error('没有识别到可导入的语音片段。');
-      }
-
-      const importedSubtitles = result.subtitles.map((subtitle: any, index: number) => ({
-        ...subtitle,
-        id: subtitle.id || `asr-${Date.now()}-${index}`,
-        start: (Number.isFinite(Number(subtitle.start)) ? Number(subtitle.start) : 0) + startOffset,
-        end: (Number.isFinite(Number(subtitle.end)) ? Number(subtitle.end) : Number(subtitle.start || 0) + 2) + startOffset,
-        text: String(subtitle.text || '').trim(),
-        translation: String(subtitle.translation || ''),
-      })).filter((subtitle: any) => subtitle.text);
-      setMaterials(previous => {
-        const updated = previous.map(material => material.id === materialId ? {
-          ...material,
-          content: result.transcript || importedSubtitles.map((subtitle: any) => subtitle.text).join(' '),
-          videoSubtitles: importedSubtitles,
-          transcriptionReport: clientTiming + (result.warning || ''),
-          sentences: importedSubtitles.map((subtitle: any) => subtitle.text),
-        } : material);
-        localStorage.setItem('ielts_material_files', JSON.stringify(updated));
-        return updated;
-      });
-      setSelectedMaterialId(materialId);
-      const isAudioMaterial = materials.some(material => material.id === materialId && material.type === 'audio');
-      if (isAudioMaterial) {
-        const updatedMap = {
-          ...lineTranslationsMap,
-          [materialId]: importedSubtitles.map((subtitle: any) => ({ original: subtitle.text, translation: subtitle.translation || '' })),
-        };
-        setLineTranslationsMap(updatedMap);
-        localStorage.setItem('ielts_material_line_translations', JSON.stringify(updatedMap));
-        setShowLineByLine(true);
-        setShowAudioTranscript(true);
-      } else {
-        setIsSubtitleEditorOpen(true);
-        setEditorSubtitles(importedSubtitles);
-        setRawSubtitlePaste(formatSubtitlesToRawText(importedSubtitles));
-      }
-      alert(`语音识别完成，已导入 ${importedSubtitles.length} 句字幕。${clientTiming}${result.warning || '可以在下方校对并保存修改。'}`);
-  };
-
-  const handleTranscribeMediaFile = async (file: File, materialId = activeMaterial?.id) => {
-    if (!materialId) return;
-    const extension = file.name.split('.').pop()?.toLowerCase() || '';
-    const mimeByExtension: Record<string, string> = {
-      aac: 'audio/aac', flac: 'audio/flac', mp3: 'audio/mpeg', m4a: 'audio/mp4', mp4: 'video/mp4',
-      mov: 'video/mov', avi: 'video/avi', mpeg: 'video/mpeg', mpg: 'video/mpg', webm: file.type.startsWith('audio/') ? 'audio/webm' : 'video/webm',
-      wav: 'audio/wav', wma: 'audio/mp4', ogg: 'audio/ogg', '3gp': 'video/3gpp', flv: 'video/x-flv', wmv: 'video/wmv',
-    };
-    let mimeType = file.type.toLowerCase();
-    if (mimeType === 'audio/x-m4a') mimeType = 'audio/mp4';
-    if (mimeType === 'video/quicktime') mimeType = 'video/mov';
-    if (mimeType === 'video/x-msvideo') mimeType = 'video/avi';
-    if (mimeType === 'video/x-ms-wmv') mimeType = 'video/wmv';
-    if (mimeType === 'audio/x-wav') mimeType = 'audio/wav';
-    if (!mimeType || mimeType === 'application/octet-stream') mimeType = mimeByExtension[extension] || '';
-    if (!mimeType.startsWith('audio/') && !mimeType.startsWith('video/')) {
-      alert('请选择常见音频或视频文件，例如 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM。');
-      return;
-    }
-    if (file.size > 200 * 1024 * 1024) {
-      alert('文件不能超过 200 MB。建议剪出需要精听的片段，或先导出压缩后的音频。');
-      return;
-    }
-
-    setIsTranscribingMedia(true);
-    setTranscribingMediaMessage('正在上传音视频…');
-    const uploadStarted = performance.now();
-    try {
-      const response = await fetch('/api/asr/transcribe-media', {
-        signal: AbortSignal.timeout(5 * 60 * 1000),
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'X-Media-Mime-Type': mimeType,
-          'X-Media-Name': encodeURIComponent(file.name),
-        },
-        body: file,
-      });
-      const uploadResult = await response.json();
-      if (!response.ok) throw new Error(uploadResult.error || '音视频转写失败');
-      if (!uploadResult.jobId) throw new Error('服务器没有返回转写任务编号。');
-      await receiveTranscription(uploadResult.jobId, materialId, 0, `上传 ${((performance.now() - uploadStarted) / 1000).toFixed(1)} 秒。`);
-    } catch (error: any) {
-      console.error('Error transcribing media file:', error);
-      alert(`音视频转写失败：${error?.name === 'TimeoutError' ? '上传或查询识别进度超时，本次等待已结束，请检查网络。' : error.message || '请重试或检查百炼 API Key 配置。'}`);
-    } finally {
-      setIsTranscribingMedia(false);
-      setTranscribingMediaMessage('正在上传音视频…');
-      if (mediaFileInputRef.current) mediaFileInputRef.current.value = '';
-    }
-  };
-
-  // Save the modified subtitle array
-  const handleSaveSubtitleEdits = () => {
-    if (!activeMaterial) return;
-
-    // Validate and sort subtitles by start time
-    const sortedSubtitles = [...editorSubtitles]
-      .filter(s => s.text && s.text.trim().length > 0)
-      .map((s, index) => ({
-        ...s,
-        id: s.id || `s-${Date.now()}-${index}`,
-        start: isNaN(parseFloat(s.start)) ? 0 : parseFloat(parseFloat(s.start).toFixed(2)),
-        end: isNaN(parseFloat(s.end)) ? 5 : parseFloat(parseFloat(s.end).toFixed(2)),
-      }))
-      .sort((a, b) => a.start - b.start);
-
-    const updatedMaterials = materials.map(m => {
-      if (m.id === activeMaterial.id) {
-        return {
-          ...m,
-          content: subtitlesToOriginalTranscript(sortedSubtitles),
-          videoSubtitles: sortedSubtitles,
-          sentences: sortedSubtitles.map(s => s.text) // sync sentences for dictation too
-        };
-      }
-      return m;
-    });
-
-    setMaterials(updatedMaterials);
-    localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
-    setIsSubtitleEditorOpen(false);
-    
-    alert('双语字幕编辑与对齐修改保存成功！');
-  };
-
-  // Synchronized formatting and parsing helpers
-  const formatSubtitlesToRawText = (subs: any[]) => {
-    return subs.map(s => `[${s.start.toFixed(3)}-${s.end.toFixed(3)}] ${s.text} | ${s.translation}`).join('\n');
-  };
-
-  const isMusicOnlyCue = (text: string) => !cleanMusicCue(text);
-
-  const mergeShortSubtitleCues = (cues: any[]) => {
-    const merged: any[] = [];
-    for (const source of cues) {
-      const text = cleanMusicCue(String(source.text || ''));
-      if (!text || isMusicOnlyCue(String(source.text || ''))) continue;
-      const cue = { ...source, text, translation: cleanMusicCue(String(source.translation || '')) };
-      const previous = merged[merged.length - 1];
-      if (!previous) {
-        merged.push(cue);
-        continue;
-      }
-      const gap = cue.start - previous.end;
-      const previousWords = previous.text.split(/\s+/).length;
-      const combinedDuration = cue.end - previous.start;
-      const previousEndsSentence = /[.!?。！？]["')\]]?$/.test(previous.text);
-      const hasReadableSentence = previousEndsSentence && previousWords >= 8;
-      const shouldMerge = !hasReadableSentence && gap <= 0.9 && gap >= -0.15
-        && previousWords < 24 && `${previous.text} ${cue.text}`.length <= 180 && combinedDuration <= 15;
-      if (shouldMerge) {
-        previous.text = `${previous.text} ${cue.text}`.replace(/\s+([,.;!?])/g, '$1');
-        previous.translation = [previous.translation, cue.translation].filter(Boolean).join('');
-        previous.end = Math.max(previous.end, cue.end);
-      } else {
-        merged.push(cue);
-      }
-    }
-    return merged.map((cue, index) => ({ ...cue, id: cue.id || `merged-${Date.now()}-${index}` }));
-  };
-
-  const parseRawTextToSubtitles = (text: string) => {
-    const normalizedText = normalizeTranscriptForImport(text);
-    const lines = normalizedText.split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length === 0) return [];
-
-    const parsed: any[] = [];
-    const duration = maxSubtitleTime || 120;
-    const slice = duration / lines.length;
-
-    lines.forEach((line, index) => {
-      // Check for timestamp prefix like [0.0-5.5] or [5.5]
-      const timeMatch = line.match(/^\[([\d.]+)(?:-([\d.]+))?\]/);
-      let start = index * slice;
-      let end = (index + 1) * slice;
-      let content = line;
-
-      if (timeMatch) {
-        start = parseFloat(timeMatch[1]);
-        if (timeMatch[2]) {
-          end = parseFloat(timeMatch[2]);
-        } else {
-          const nextTimedLine = lines.slice(index + 1).map(next => next.match(/^\[([\d.]+)(?:-([\d.]+))?\]/)).find(Boolean);
-          const nextStart = nextTimedLine ? Number(nextTimedLine[1]) : NaN;
-          end = Number.isFinite(nextStart) && nextStart > start ? nextStart : start + Math.max(1, Math.min(slice, 5));
-        }
-        content = line.replace(timeMatch[0], '').trim();
-      }
-
-      const parts = content.split('|');
-      const textVal = parts[0]?.trim() || '';
-      const translation = parts[1]?.trim() || '（点击编辑中文翻译）';
-
-      parsed.push({
-        id: `s-parsed-${index}-${Date.now()}`,
-        start: parseFloat(start.toFixed(1)),
-        end: parseFloat(end.toFixed(1)),
-        text: textVal,
-        translation
-      });
-    });
-    return mergeShortSubtitleCues(parsed);
-  };
-
-  const handleTextareaChange = (value: string) => {
-    setRawSubtitlePaste(value);
-    const parsed = parseRawTextToSubtitles(value);
-    setEditorSubtitles(parsed);
-  };
-
-
-  const pasteTranscriptFromClipboard = async () => {
-    try {
-      let clipboardText = '';
-      if (navigator.clipboard?.read) {
-        try {
-          const items = await navigator.clipboard.read();
-          for (const item of items) {
-            if (item.types.includes('text/html')) {
-              clipboardText = subtitleRowsFromHtml(await (await item.getType('text/html')).text());
-              if (clipboardText) break;
-            }
-          }
-        } catch {
-          // Fall back to plain text when rich clipboard permission is unavailable.
-        }
-      }
-      if (!clipboardText && navigator.clipboard?.readText) clipboardText = await navigator.clipboard.readText();
-      if (!clipboardText.trim()) throw new Error('剪贴板没有可识别的字幕表格。请直接粘贴文字稿，或导入插件导出的 HTML 文件。');
-      const normalized = normalizeTranscriptForImport(clipboardText);
-      setRawSubtitlePaste(normalized);
-      setEditorSubtitles(parseRawTextToSubtitles(normalized));
-    } catch (error: any) {
-      alert(error?.message || '无法读取剪贴板。请允许浏览器访问剪贴板，或直接粘贴文字稿。');
-    }
-  };
-
-  // Shift all timestamps globally forward/backward
-  const handleApplyGlobalTimeShift = () => {
-    if (globalTimeShift === 0) return;
-    const shifted = editorSubtitles.map(sub => {
-      const newStart = Math.max(0, parseFloat((sub.start + globalTimeShift).toFixed(2)));
-      const newEnd = Math.max(0, parseFloat((sub.end + globalTimeShift).toFixed(2)));
-      return {
-        ...sub,
-        start: newStart,
-        end: newEnd
-      };
-    });
-    setEditorSubtitles(shifted);
-    setRawSubtitlePaste(formatSubtitlesToRawText(shifted));
-    setGlobalTimeShift(0);
-    alert(`批量时间校准成功！所有字幕时间轴已微调 ${globalTimeShift > 0 ? '+' : ''}${globalTimeShift} 秒。\n（注意：请点击下方“保存修改并关闭”按钮使修改正式生效）`);
-  };
-
-  // AI subtitle auto-alignment helper
-  const handleAIAlignSubtitles = async () => {
-    if (!rawSubtitlePaste.trim()) {
-      alert('请先输入文稿或字幕文本内容。');
-      return;
-    }
-    setAlignmentProgress('正在准备分批处理…');
-    setIsAligningWithAI(true);
-    try {
-      const data = { subtitles: await alignTranscript() };
-
-      if (data && data.subtitles) {
-        const alignedSubtitles = cleanAlignedSubtitles(data.subtitles)
-          .map((subtitle, index) => ({ ...subtitle, id: subtitle.id || `aligned-${index}` }))
-          .sort((a, b) => a.start - b.start);
-        setEditorSubtitles(alignedSubtitles);
-        setRawSubtitlePaste(formatSubtitlesToRawText(alignedSubtitles));
-        alert('AI 智能字幕对齐与学术分段成功！已将原文智能重构并切分为双语段落，已保留已有字幕时间范围；句内拆分时间为估算，请校对后点击“保存修改并关闭”。');
-      } else {
-        throw new Error('返回的字幕格式无效');
-      }
-    } catch (err: any) {
-      console.error(err);
-      alert('AI 字幕分段失败：' + (err?.name === 'TimeoutError' ? '本批处理超过 2 分钟，原字幕未修改，请稍后重试。' : err.message));
-    } finally {
-      setIsAligningWithAI(false);
-    }
-  };
-
-  // Directly parse lines and evenly distribute over the timeline
-  const handleDirectTextImport = () => {
-    if (!rawSubtitlePaste.trim()) {
-      alert('请先粘贴原始文稿文本。');
-      return;
-    }
-    const parsed = parseRawTextToSubtitles(rawSubtitlePaste);
-    if (parsed.length === 0) return;
-
-    setEditorSubtitles(parsed);
-    setRawSubtitlePaste(formatSubtitlesToRawText(parsed));
-    alert(`成功直接解析并生成 ${parsed.length} 行双语段落！您可以在下方的预览表格中微调并保存。`);
-  };
-
-  const handleHtmlSubtitleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const html = await file.text();
-      const document = new DOMParser().parseFromString(html, 'text/html');
-      const rows = Array.from(document.querySelectorAll('tr'));
-      const parsedRows: { time: number; text: string; translation: string }[] = [];
-      for (const row of rows) {
-        const cells = Array.from(row.querySelectorAll('th,td')).map(cell => (cell.textContent || '').replace(/\s+/g, ' ').trim());
-        if (cells.length < 2) continue;
-        const headerText = cells.join(' ').toLowerCase();
-        if (/\btime\b/.test(headerText) && /subtitle|字幕/.test(headerText)) continue;
-        const timeIndex = cells.findIndex(cell => /^(?:(\d{1,2}:)?\d{1,2}:)?\d{1,2}(?:\.\d+)?\s*s?$/i.test(cell));
-        if (timeIndex < 0) continue;
-        const timeMatch = cells[timeIndex].match(/^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?\s*s?$/i);
-        const seconds = timeMatch
-          ? Number(timeMatch[1] || 0) * 3600 + Number(timeMatch[2]) * 60 + Number(timeMatch[3]) + Number(`0.${timeMatch[4] || 0}`)
-          : Number(cells[timeIndex].replace(/\s*s$/i, ''));
-        const contentCells = cells.filter((_cell, index) => index !== timeIndex);
-        const textIndex = contentCells.findIndex(cell => /[a-z]/i.test(cell));
-        if (!Number.isFinite(seconds) || textIndex < 0) continue;
-        const text = cleanMusicCue(contentCells[textIndex]);
-        const translation = cleanMusicCue(contentCells.find((cell, index) => index !== textIndex && /[\u3400-\u9fff]/.test(cell)) || contentCells.find((_cell, index) => index !== textIndex) || '');
-        if (text && !isMusicOnlyCue(contentCells[textIndex])) parsedRows.push({ time: seconds, text, translation });
-      }
-      const uniqueRows = parsedRows.filter((row, index) => index === 0 || row.time >= parsedRows[index - 1].time)
-        .filter((row, index, all) => index === 0 || row.time !== all[index - 1].time || row.text !== all[index - 1].text);
-      if (!uniqueRows.length) throw new Error('没有在 HTML 表格中识别到“时间 / 字幕 / 翻译”数据。请确认选择的是插件导出的字幕 HTML 文件。');
-      const imported = mergeShortSubtitleCues(uniqueRows.map((row, index) => ({
-        id: `html-${Date.now()}-${index}`,
-        start: row.time,
-        end: index + 1 < uniqueRows.length ? Math.max(row.time + 0.5, uniqueRows[index + 1].time) : row.time + 3,
-        text: row.text,
-        translation: row.translation || '（点击编辑中文翻译）',
-      })));
-      setEditorSubtitles(imported);
-      setRawSubtitlePaste(formatSubtitlesToRawText(imported));
-      alert(`已从 HTML 导入 ${imported.length} 条双语字幕。请检查预览并保存。`);
-    } catch (error: any) {
-      alert(`HTML 字幕导入失败：${error?.message || '文件读取失败。'}`);
-    } finally {
-      event.target.value = '';
-    }
-  };
-
-  // Excel/CSV subtitle import and smart AI resegmentation
-  const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const fileName = file.name;
-    const lowerName = fileName.toLowerCase();
-    if (!lowerName.endsWith('.xlsx') && !lowerName.endsWith('.xls') && !lowerName.endsWith('.csv')) {
-      alert('请上传有效的 Excel (.xlsx, .xls) 或 CSV (.csv) 文件。');
-      return;
-    }
-
-    setIsParsingExcel(true);
-    void (async () => {
-      try {
-        const result = await requestSubtitleSpreadsheetImport(file, maxSubtitleTime || 120);
-        setEditorSubtitles(result.subtitles);
-        setRawSubtitlePaste(formatSubtitlesToRawText(result.subtitles));
-        setEditorTab('visual');
-        const fallbackNote = result.usedLocalFallback ? ' 服务器接口不可用，已在浏览器本地解析。' : '';
-        alert(`字幕表格导入完成：整理出 ${result.subtitles.length} 段，时间轴取自表格，音乐标注已清理。${fallbackNote} 请在“可视化编辑”检查并保存。`);
-      } catch (err: any) {
-        console.error('Excel processing error:', err);
-        alert('Excel/CSV 导入失败：' + err.message);
-      } finally {
-        setIsParsingExcel(false);
-        e.target.value = '';
-      }
-    })();
-  };
-
-  // Direct active material Excel import uploader
-  const handleActiveMaterialExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const fileName = file.name;
-    const lowerName = fileName.toLowerCase();
-    if (!lowerName.endsWith('.xlsx') && !lowerName.endsWith('.xls') && !lowerName.endsWith('.csv')) {
-      alert('请上传有效的 Excel (.xlsx, .xls) 或 CSV (.csv) 文件。');
-      return;
-    }
-
-    setIsParsingExcel(true);
-    void (async () => {
-      try {
-        const result = await requestSubtitleSpreadsheetImport(file, maxSubtitleTime || 120);
-        const importedSubtitles = result.subtitles;
-        if (importedSubtitles.length) {
-          // Save back to materials list and local storage
-          const updatedMaterials = materials.map(m => {
-            if (m.id === activeMaterial?.id) {
-              return {
-                ...m,
-                content: subtitlesToOriginalTranscript(importedSubtitles),
-                videoSubtitles: importedSubtitles,
-                sentences: importedSubtitles.map(s => s.text)
-              };
-            }
-            return m;
-          });
-
-          setMaterials(updatedMaterials);
-          localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
-          setSpeakingReadingMode('bilingual');
-          setActiveSubtitleId(importedSubtitles[0].id);
-
-          // Force state refresh so activeMaterial is updated instantly in the UI
-          setTimeout(() => {
-            const currentId = selectedMaterialId;
-            setSelectedMaterialId(null);
-            setTimeout(() => setSelectedMaterialId(currentId), 20);
-          }, 50);
-
-          const fallbackNote = result.usedLocalFallback ? '服务器解析接口尚不可用，已改用浏览器本地解析。' : '';
-          alert(`字幕已导入：整理为 ${importedSubtitles.length} 段；保留时间轴和双语字幕，并生成了去除翻译与音乐标注的完整英文原文。${fallbackNote}`);
-        } else {
-          throw new Error('材料保存失败，请重新选择当前视频后再导入。');
-        }
-      } catch (err: any) {
-        console.error('Active material Excel processing error:', err);
-        alert('Excel/CSV 导入失败：' + err.message);
-      } finally {
-        setIsParsingExcel(false);
-        e.target.value = '';
-      }
-    })();
   };
 
   // Synchronized video timeline tracker
@@ -2163,234 +1387,6 @@ export default function MaterialsLibrary({
     setLocalDictationChecked(true);
   };
 
-  // 2. Folder Actions
-  const handleCreateFolder = () => {
-    if (!newFolderName.trim()) return;
-    const newFolder: MaterialFolder = {
-      id: `f-${Date.now()}`,
-      name: newFolderName,
-      category: activeCategory,
-      createdAt: new Date().toISOString()
-    };
-    
-    setFolders(prev => {
-      const updated = [...prev, newFolder];
-      localStorage.setItem('ielts_material_folders', JSON.stringify(updated));
-      return updated;
-    });
-    setNewFolderName('');
-    setIsNewFolderOpen(false);
-    setSelectedFolderId(newFolder.id);
-  };
-
-  const handleDeleteFolder = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    // Bypassed window.confirm for iframe compatibility
-    setFolders(prev => {
-      const updated = prev.filter(f => f.id !== id);
-      localStorage.setItem('ielts_material_folders', JSON.stringify(updated));
-      return updated;
-    });
-    setMaterials(prev => {
-      // Also delete any audio files from IndexedDB for materials inside this folder
-      const insideMats = prev.filter(m => m.folderId === id);
-      insideMats.forEach(m => {
-        if (m.type === 'audio') {
-          deleteAudio(m.id).catch(console.error);
-        }
-      });
-      const updated = prev.filter(m => m.folderId !== id);
-      localStorage.setItem('ielts_material_files', JSON.stringify(updated));
-      return updated;
-    });
-    if (selectedFolderId === id) {
-      setSelectedFolderId(null);
-      setSelectedMaterialId(null);
-    }
-  };
-
-  // 3. Material Actions
-  const handleRenameMaterial = (id: string, currentName: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setRenamingMaterialId(id);
-    setRenamingMaterialName(currentName);
-    setIsRenameModalOpen(true);
-  };
-
-  const handleSaveRenameMaterial = () => {
-    if (!renamingMaterialId || !renamingMaterialName.trim()) return;
-    
-    const updated = materials.map(m => 
-      m.id === renamingMaterialId ? { ...m, name: renamingMaterialName.trim() } : m
-    );
-    setMaterials(updated);
-    localStorage.setItem('ielts_material_files', JSON.stringify(updated));
-    
-    setIsRenameModalOpen(false);
-    setRenamingMaterialId(null);
-    setRenamingMaterialName('');
-  };
-
-  const handleCreateMaterial = async () => {
-    if (!selectedFolderId) {
-      alert('请先在上方文件夹列表中选择或创建一个分类文件夹！');
-      return;
-    }
-    if (!newMatName.trim()) {
-      alert('请输入材料名称！');
-      return;
-    }
-    if (newMatType === 'audio' && newMatUrl.startsWith('blob:') && !tempAudioBase64) {
-      alert('音频文件仍在读取或读取失败，请等待读取完成后再保存，或重新选择音频文件。');
-      return;
-    }
-    
-    // Auto generate sentences if audio
-    let sentences: string[] = [];
-    const audioTranscriptPlaceholder = /^正在加载本地音频|录入后可点击一键AI智能转写/i.test(newMatContent.trim());
-    if (newMatType === 'audio' && newMatContent && !audioTranscriptPlaceholder) {
-      sentences = newMatContent
-        .split(/(?<=[.!?])\s+/)
-        .filter(s => s.trim().length > 3);
-    }
-
-    const newMat: StudyMaterial = {
-      id: `m-${Date.now()}`,
-      name: newMatName,
-      type: newMatType,
-      category: activeCategory,
-      folderId: selectedFolderId,
-      url: newMatUrl || undefined,
-      content: newMatContent,
-      notes: '',
-      sentences: sentences.length > 0 ? sentences : undefined,
-      timestamp: new Date().toISOString()
-    };
-
-    if (newMat.type === 'audio' && tempAudioBase64) {
-      try {
-        await saveAudio(newMat.id, tempAudioBase64, tempAudioMimeType);
-      } catch (error: any) {
-        console.error('Failed to save uploaded audio to IndexedDB:', error);
-        alert(`音频保存失败：${error?.name === 'QuotaExceededError' ? '浏览器本地空间不足，请删除部分材料后重试。' : error?.message || '请重新选择音频后重试。'}`);
-        return;
-      }
-    }
-    setTempAudioBase64('');
-    setTempAudioMimeType('');
-
-    setMaterials(prev => {
-      const updated = [newMat, ...prev];
-      localStorage.setItem('ielts_material_files', JSON.stringify(updated));
-      return updated;
-    });
-
-    setNewMatName('');
-    setNewMatUrl('');
-    setNewMatContent('');
-    setIsNewMaterialOpen(false);
-    setSelectedMaterialId(newMat.id);
-  };
-
-  const handleDeleteMaterial = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    // Bypassed window.confirm for iframe compatibility
-    deleteAudio(id).catch(console.error);
-    setMaterials(prev => {
-      const updated = prev.filter(m => m.id !== id);
-      localStorage.setItem('ielts_material_files', JSON.stringify(updated));
-      return updated;
-    });
-    if (selectedMaterialId === id) {
-      setSelectedMaterialId(null);
-    }
-  };
-
-  // 4. File Upload Handler
-  const handleLocalFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const fileName = file.name;
-    const lastDotIndex = fileName.lastIndexOf('.');
-    setNewMatName(lastDotIndex !== -1 ? fileName.substring(0, lastDotIndex) : fileName);
-    
-    if (file.type.startsWith('audio/')) {
-      setNewMatType('audio');
-      setIsParsingFile(true);
-      // Create local object URL for preview audio
-      const objUrl = URL.createObjectURL(file);
-      setNewMatUrl(objUrl);
-      
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        // Do not put a loading hint in material.content: the UI treats content as an existing transcript.
-        setNewMatContent('');
-        const dataUrl = event.target?.result as string;
-        if (dataUrl) {
-          const base64 = dataUrl.split(',')[1];
-          setTempAudioBase64(base64);
-          setTempAudioMimeType(file.type);
-        }
-        setIsParsingFile(false);
-      };
-      reader.onerror = () => {
-        setIsParsingFile(false);
-        alert('读取音频失败，请重新选择该文件。');
-      };
-      reader.readAsDataURL(file);
-    } else {
-      setNewMatType('document');
-      const lowerName = fileName.toLowerCase();
-      
-      if (lowerName.endsWith('.pdf') || lowerName.endsWith('.docx') || lowerName.endsWith('.doc')) {
-        setIsParsingFile(true);
-        setNewMatContent('正在深度解析文档内容，请稍候...');
-        
-        const reader = new FileReader();
-        reader.onload = async (event) => {
-          try {
-            const dataUrl = event.target?.result as string;
-            if (!dataUrl) throw new Error('读取文件失败');
-            const base64 = dataUrl.split(',')[1];
-            
-            const response = await fetch('/api/materials/parse-file', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                base64,
-                fileName,
-                fileType: file.type
-              })
-            });
-            
-            if (!response.ok) {
-              const errData = await response.json();
-              throw new Error(errData.error || '解析服务器返回错误');
-            }
-            
-            const result = await response.json();
-            setNewMatContent(result.text || '(未提取到任何有效文本)');
-          } catch (err: any) {
-            console.error('File parsing error:', err);
-            setNewMatContent('文档解析失败: ' + err.message + '\n请尝试直接复制文本内容填入下方输入框。');
-            alert('文件解析失败: ' + err.message);
-          } finally {
-            setIsParsingFile(false);
-          }
-        };
-        reader.readAsDataURL(file);
-      } else {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const text = event.target?.result as string;
-          setNewMatContent(text || '');
-        };
-        reader.readAsText(file);
-      }
-    }
-  };
-
   // 5. AI Call - Summarize Material
   const handleAISummarize = async () => {
     if (!activeMaterial) return;
@@ -2422,82 +1418,6 @@ export default function MaterialsLibrary({
     } catch (e: any) {
       console.error(e);
       alert('AI总结失败，请检查API Key设置: ' + (e.message || '网络连接超时'));
-    } finally {
-      setIsSummarizing(false);
-    }
-  };
-
-  // 6. AI Call - Transcribe Audio for Listening
-  const handleAITranscribe = async (replacementFile?: File) => {
-    if (!activeMaterial || isSummarizing || isTranscribingMedia) return;
-    setIsSummarizing(true);
-    try {
-      const saveAndTranscribeFile = async (file: File) => {
-        if (file.size > 200 * 1024 * 1024) throw new Error('音频超过 200 MB 上传上限，请压缩或剪短后重试。');
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = event => typeof event.target?.result === 'string' ? resolve(event.target.result) : reject(new Error('读取音频失败，请重新选择文件。'));
-          reader.onerror = () => reject(new Error('读取音频失败，请重新选择文件。'));
-          reader.readAsDataURL(file);
-        });
-        const extension = file.name.split('.').pop()?.toLowerCase() || '';
-        const mimeType = file.type || ({ mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac', aac: 'audio/aac' } as Record<string, string>)[extension] || 'audio/mpeg';
-        await saveAudio(activeMaterial.id, dataUrl.split(',')[1], mimeType);
-        setActiveAudioUrl(URL.createObjectURL(new Blob([file], { type: mimeType })));
-        setIsSummarizing(false);
-        await handleTranscribeMediaFile(file, activeMaterial.id);
-      };
-
-      if (replacementFile) {
-        await saveAndTranscribeFile(replacementFile);
-        return;
-      }
-
-      const audioRecord = await getAudio(activeMaterial.id);
-      if (!audioRecord) {
-        // A blob URL can be recovered only while the page that created it is still open.
-        // This salvages uploads saved before their IndexedDB write completed.
-        if (activeMaterial.url?.startsWith('blob:')) {
-          try {
-            const response = await fetch(activeMaterial.url);
-            if (response.ok) {
-              const blob = await response.blob();
-              const mimeType = blob.type || 'audio/mpeg';
-              const extension = mimeType.includes('wav') ? 'wav' : mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : mimeType.includes('flac') ? 'flac' : 'mp3';
-              await saveAndTranscribeFile(new File([blob], `${activeMaterial.name}.${extension}`, { type: mimeType }));
-              return;
-            }
-          } catch (error) {
-            console.warn('Could not recover audio from the current blob URL:', error);
-          }
-        }
-        throw new Error('浏览器本地音频缓存已丢失。请点下方“重新选择音频并识别”，可保留当前材料和笔记，无需删除材料。');
-      }
-      if (!audioRecord.base64) throw new Error('本地音频内容为空，请重新上传音频后重试。');
-      const estimatedBytes = Math.floor(audioRecord.base64.length * 3 / 4);
-      if (estimatedBytes > 200 * 1024 * 1024) throw new Error('音频超过 200 MB 上传上限，请压缩或剪短后重试。');
-      const binary = atob(audioRecord.base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      let mimeType = (audioRecord.mimeType || '').toLowerCase().split(';')[0].trim();
-      const audioMimeAliases: Record<string, string> = {
-        'audio/x-m4a': 'audio/mp4',
-        'audio/x-wav': 'audio/wav',
-        'audio/wave': 'audio/wav',
-        'audio/x-pn-wav': 'audio/wav',
-        'audio/mp3': 'audio/mpeg',
-      };
-      mimeType = audioMimeAliases[mimeType] || mimeType || 'audio/mpeg';
-      if (!mimeType.startsWith('audio/')) {
-        throw new Error(`音频格式标记异常（${audioRecord.mimeType || '未知'}），请重新上传 MP3、M4A 或 WAV 文件。`);
-      }
-      const extension = mimeType.includes('wav') ? 'wav' : mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : mimeType.includes('flac') ? 'flac' : 'mp3';
-      const file = new File([bytes], `audio.${extension}`, { type: mimeType });
-      setIsSummarizing(false);
-      await handleTranscribeMediaFile(file, activeMaterial.id);
-    } catch (e: any) {
-      console.error(e);
-      alert('音频转写失败: ' + e.message);
     } finally {
       setIsSummarizing(false);
     }
@@ -2940,7 +1860,7 @@ export default function MaterialsLibrary({
             <BookOpen className="h-5 w-5 text-stone-700" />
             雅思真题学术材料库
           </h2>
-          <p className="text-xs text-stone-400 mt-1">分模块归类文件夹，支持文档精读笔记、听写精听，以及 AI 学术总结</p>
+  <p className="text-xs text-stone-400 mt-1">由管理员统一发布视频和字幕；学习者可播放、跟读并查询词汇</p>
         </div>
         
         {/* Module Switcher */}
@@ -2983,46 +1903,12 @@ export default function MaterialsLibrary({
             <span className="text-xs font-mono font-semibold text-stone-400 uppercase tracking-wider">
               文件夹目录
             </span>
-            <button
-              onClick={() => setIsNewFolderOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-stone-50 text-stone-700 hover:bg-stone-100 border border-stone-200 rounded-lg text-xs font-semibold transition cursor-pointer"
-            >
-              <Plus className="h-3 w-3" />
-              新建文件夹
-            </button>
           </div>
-
-          {/* New Folder Inline Form */}
-          {isNewFolderOpen && (
-            <div className="bg-stone-50 border p-3 rounded-xl space-y-2.5 animate-fade-in">
-              <input
-                type="text"
-                placeholder="文件夹名称 (如: Cambridge 18)..."
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-white border rounded-lg text-xs font-sans focus:outline-hidden focus:border-stone-900"
-              />
-              <div className="flex gap-1.5">
-                <button
-                  onClick={() => setIsNewFolderOpen(false)}
-                  className="flex-1 py-1.5 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-md text-[11px] font-semibold transition"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={handleCreateFolder}
-                  className="flex-1 py-1.5 bg-stone-900 hover:bg-stone-850 text-white rounded-md text-[11px] font-semibold transition"
-                >
-                  创建
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Folders List */}
           <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
             {filteredFolders.length === 0 ? (
-              <p className="text-center text-xs text-stone-400 py-6">无文件夹。请创建新文件夹</p>
+              <p className="text-center text-xs text-stone-400 py-6">管理员尚未发布此分类的材料</p>
             ) : (
               filteredFolders.map((folder) => {
                 const isSelected = selectedFolderId === folder.id;
@@ -3043,13 +1929,6 @@ export default function MaterialsLibrary({
                       {isSelected ? <FolderOpen className="h-4 w-4 text-amber-400 shrink-0" /> : <Folder className="h-4 w-4 text-stone-500 shrink-0" />}
                       <span className="text-xs font-semibold truncate">{folder.name}</span>
                     </div>
-                    <button
-                      onClick={(e) => handleDeleteFolder(folder.id, e)}
-                      className={`p-1 rounded-md transition ${isSelected ? 'text-stone-400 hover:text-red-400' : 'text-stone-400 hover:text-stone-900'}`}
-                      title="删除文件夹"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
                   </div>
                 );
               })
@@ -3065,116 +1944,7 @@ export default function MaterialsLibrary({
                   材料列表
                 </span>
                 
-                <button
-                  onClick={() => setIsNewMaterialOpen(true)}
-                  className="flex items-center gap-1 px-2 py-1 bg-stone-900 text-white hover:bg-stone-800 rounded-lg text-[10px] font-bold transition cursor-pointer"
-                >
-                  <Plus className="h-2.5 w-2.5" />
-                  上传/新增
-                </button>
               </div>
-
-              {/* Add Material Modal/Form */}
-              {isNewMaterialOpen && (
-                <div className="bg-stone-50 border p-3 rounded-xl space-y-3.5 animate-fade-in">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono text-stone-500 block uppercase">材料名称</label>
-                    <input
-                      type="text"
-                      placeholder="如: Oxford Environmental Reading..."
-                      value={newMatName}
-                      onChange={(e) => setNewMatName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleCreateMaterial();
-                        }
-                      }}
-                      className="w-full px-2 py-1.5 bg-white border rounded-lg text-xs font-sans focus:outline-hidden"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] font-mono text-stone-500 block uppercase mb-1">材料格式</label>
-                      <select
-                        value={newMatType}
-                        onChange={(e) => setNewMatType(e.target.value as MaterialType)}
-                        className="w-full p-1.5 bg-white border rounded-lg text-xs focus:outline-hidden"
-                      >
-                        <option value="document">📄 文本/文档</option>
-                        <option value="audio">🎧 录音/音频</option>
-                        <option value="video">🎬 视频短片</option>
-                        <option value="link">🌐 网页链接</option>
-                      </select>
-                    </div>
-                    {newMatType === 'document' || newMatType === 'audio' ? (
-                      <div>
-                        <label className="text-[10px] font-mono text-stone-500 block uppercase mb-1 flex items-center justify-between">
-                          <span>{newMatType === 'audio' ? '选择音频文件' : '选择文档文件'}</span>
-                          {isParsingFile && <span className="text-amber-600 animate-pulse font-bold text-[9px]">{newMatType === 'audio' ? '读取音频中…' : '解析中…'}</span>}
-                        </label>
-                        <input
-                          type="file"
-                          disabled={isParsingFile}
-                          onChange={handleLocalFileUpload}
-                          accept={newMatType === 'audio' ? 'audio/*' : '.pdf,.doc,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain'}
-                          className="w-full text-[10px] file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-[10px] file:font-semibold file:bg-stone-200 file:text-stone-700 hover:file:bg-stone-300 disabled:opacity-55"
-                        />
-                      </div>
-                    ) : (
-                      <div className="self-end rounded-lg border border-stone-200 bg-white px-2.5 py-2 text-[10px] leading-relaxed text-stone-500">
-                        {newMatType === 'video' ? '视频请填写链接；本地音视频可在创建后上传识别。' : '网页材料填写链接，创建后可导入正文。'}
-                      </div>
-                    )}
-                  </div>
-
-                  {newMatType !== 'document' && newMatType !== 'audio' && (
-                    <div className="space-y-1">
-                      <label className="text-[10px] font-mono text-stone-500 block uppercase">{newMatType === 'video' ? '视频链接（可稍后填写）' : '网页链接（可稍后填写）'}</label>
-                      <input
-                        type="text"
-                        placeholder={newMatType === 'video' ? '粘贴 YouTube、B站或视频地址' : '粘贴要导入的网页地址'}
-                        value={newMatUrl}
-                        onChange={(e) => setNewMatUrl(e.target.value)}
-                        className="w-full px-2 py-1.5 bg-white border rounded-lg text-xs font-sans"
-                      />
-                    </div>
-                  )}
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono text-stone-500 block uppercase">
-                      {newMatType === 'audio' || newMatType === 'video' ? '字幕或听力稿（可选）' : '正文内容（可选）'}
-                    </label>
-                    <textarea
-                      placeholder={newMatType === 'video' ? '可先留空；创建后再导入字幕或上传音视频识别。' : newMatType === 'audio' ? '可选：粘贴听力稿；也可以创建后使用语音识别。' : '可直接粘贴文章正文；也可上传文档后自动提取。'}
-                      rows={7}
-                      value={newMatContent}
-                      onChange={(e) => setNewMatContent(e.target.value)}
-                      className="w-full p-2 bg-white border border-stone-250 rounded-lg text-xs font-sans focus:outline-hidden min-h-[128px] resize-y"
-                    />
-                    {(newMatType === 'document' || newMatType === 'audio') && <p className="text-[9px] text-stone-400 leading-normal">
-                      {newMatType === 'document' ? '支持 PDF、DOC、DOCX、TXT；扫描版或无法解析的文件可以直接粘贴正文。' : '音频保存在当前浏览器本机，不会同步到其他设备；选好文件并等待读取完成后创建材料，再开始识别。若本地缓存丢失，可在材料页重新选择音频，无需删除材料。'}
-                    </p>}
-                  </div>
-
-                  <div className="flex gap-1.5 pt-1">
-                    <button
-                      onClick={() => setIsNewMaterialOpen(false)}
-                      className="flex-1 py-1.5 bg-stone-200 text-stone-700 rounded-md text-[10px] font-bold"
-                    >
-                      取消
-                    </button>
-                    <button
-                      onClick={handleCreateMaterial}
-                      disabled={isParsingFile}
-                      className="flex-1 py-1.5 bg-stone-900 text-white rounded-md text-[10px] font-bold disabled:cursor-wait disabled:opacity-50"
-                    >
-                      {isParsingFile ? (newMatType === 'audio' ? '请等待音频读取完成…' : '请等待文档解析完成…') : '保存新增'}
-                    </button>
-                  </div>
-                </div>
-              )}
 
               {/* Material List Items */}
               <div className="space-y-1.5 max-h-[250px] overflow-y-auto pr-1">
@@ -3201,22 +1971,6 @@ export default function MaterialsLibrary({
                           <TypeIcon className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-amber-600' : 'text-stone-400'}`} />
                           <span className="text-xs font-medium truncate">{mat.name}</span>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            onClick={(e) => handleRenameMaterial(mat.id, mat.name, e)}
-                            className="p-1 text-stone-400 hover:text-amber-600 transition"
-                            title="重命名材料"
-                          >
-                            <Edit3 className="h-3 w-3" />
-                          </button>
-                          <button
-                            onClick={(e) => handleDeleteMaterial(mat.id, e)}
-                            className="p-1 text-stone-400 hover:text-red-500 transition"
-                            title="删除材料"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
                       </div>
                     );
                   })
@@ -3237,10 +1991,10 @@ export default function MaterialsLibrary({
                 <FileIcon className="h-8 w-8 text-stone-400" />
               </div>
               <h3 className="font-serif font-bold text-stone-950 text-base">
-                请先选择或创建一个学习材料
+                {materials.length ? '请先选择一份学习材料' : '管理员尚未发布学习材料'}
               </h3>
               <p className="text-xs text-stone-400 mt-2 max-w-sm leading-relaxed">
-                点击左侧目录下的文件夹并选中文件材料，即可进入精读笔记本，自动识别文本，运行雅思专项 AI 考点总结。
+                {materials.length ? '从左侧目录选择材料，即可播放视频、跟随字幕学习并查询词汇。' : '学习材料、视频链接和字幕由管理员统一整理并发布；发布后会显示在这里。'}
               </p>
             </div>
           ) : (
@@ -3326,287 +2080,7 @@ export default function MaterialsLibrary({
                     <div className="space-y-4">
                       
                       {/* Subtitles & Extraction Controller Checker */}
-                      {!activeMaterial.videoSubtitles || activeMaterial.videoSubtitles.length === 0 ? (
-                        /* Case A: Video captions not yet extracted / Paste & AI Segment Portal */
-                        <div className="bg-white border border-stone-200/80 rounded-2xl p-6 shadow-xs flex flex-col min-h-[440px] text-left space-y-4">
-                          <div className="flex items-center gap-3 border-b pb-3.5">
-                            <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-100 text-amber-600">
-                              <Sparkles className="h-5 w-5 animate-pulse" />
-                            </div>
-                            <div>
-                              <h3 className="font-serif font-bold text-stone-950 text-base">
-                                🎬 视频已就绪 · 添加字幕开始精听
-                              </h3>
-                              <p className="text-[11px] text-stone-500 leading-relaxed">
-                                下方会内嵌<b>该链接对应的原视频</b>，可直接播放。
-                                请在 YouTube 播放器菜单中打开“显示文字稿”，复制字幕后粘贴到本网页；导入结果会保存在这条视频材料中。
-                              </p>
-                            </div>
-                          </div>
-
-                          {/* 导入结果 / 注意事项 */}
-                          {crawlNotice && (
-                            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 leading-relaxed">
-                              ✅ {crawlNotice}
-                            </div>
-                          )}
-
-                          {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
-                            <button type="button"
-                              onClick={() => {
-                                setCcVideoUrl(activeMaterial.url || '');
-                                setRawSubtitlePaste(activeMaterial.content || '');
-                                setIsSubtitleEditorOpen(true);
-                              }}
-                              className="w-full py-3 px-4 bg-amber-400 hover:bg-amber-500 text-stone-900 rounded-xl text-sm font-bold transition">
-                              粘贴 YouTube 字幕/文字稿
-                            </button>
-                          )}
-
-                          {/* 无字幕时也内嵌原视频，让用户先看到真实视频 */}
-                          {activeMaterial.url &&
-                            (() => {
-                              const u = activeMaterial.url;
-                              const isDirectFile = /\.(mp4|webm|ogg)(\?.*)?$/i.test(u);
-                              const isEmbeddable = isEmbedUrl(u);
-                              if (!isDirectFile && !isEmbeddable) {
-                                return (
-                                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed">
-                                    ⚠️ 此链接暂无法自动内嵌播放。请改用 YouTube / B站 / TED 视频链接或 <b>mp4 直链</b>；
-                                    若是普通网页，可点下方「从链接导入」提取正文要点。
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div className="bg-stone-950 border border-stone-800 rounded-2xl overflow-hidden shadow-md">
-                                  {isEmbeddable ? (
-                                    <div className="relative aspect-video bg-black">
-                                      <iframe
-                                        src={iframeSrc || u}
-                                        title="Video preview"
-                                        className="w-full h-full border-0"
-                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                        allowFullScreen
-                                      />
-                                    </div>
-                                  ) : (
-                                    <video src={u} controls className="w-full aspect-video outline-hidden bg-black" />
-                                  )}
-                                </div>
-                              );
-                            })()}
-
-                          {activeMaterial.url && (
-                            <div className="bg-amber-50/40 border border-amber-200/60 rounded-xl p-4 space-y-3 mb-2">
-                              <div className="flex items-start gap-3">
-                                <div className="p-2 bg-amber-100/80 text-amber-800 rounded-lg shrink-0 mt-0.5">
-                                  <Sparkles className="h-4 w-4 animate-pulse" />
-                                </div>
-                                <div className="space-y-1">
-                                  <h4 className="text-xs font-bold text-stone-900 flex items-center gap-1.5">
-                                    🌐 从链接导入内容（视频 / 网页）
-                                  </h4>
-                                  <p className="text-[10.5px] text-stone-500 leading-relaxed space-y-0.5">
-                                    · <b>YouTube</b>：尝试自动抓取官方字幕（真实）；无字幕则只嵌入原视频。<br />
-                                    · <b>B站 / TED / mp4 直链</b>：嵌入原视频播放，字幕请自行粘贴到下方区域。<br />
-                                    · <b>普通网页</b>：抓取真实正文并生成要点（不会编造字幕）。
-                                  </p>
-                                </div>
-                              </div>
-                              <button
-                                onClick={() => handleCrawlVideo(activeMaterial)}
-                                disabled={isCrawlingVideo}
-                                className="w-full py-2.5 px-4 bg-amber-400 hover:bg-amber-300 disabled:bg-stone-100 disabled:text-stone-400 text-stone-950 rounded-lg text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
-                              >
-                                {isCrawlingVideo ? (
-                                  <>
-                                    <span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-stone-950 border-t-transparent"></span>
-                                    <span>正在解析链接并嵌入视频…</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Sparkles className="h-4 w-4" />
-                                    <span>从链接导入（嵌入原视频 / 提取正文）</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          )}
-
-                          {activeMaterial.url && (
-                            <div className="relative flex py-1 items-center">
-                              <div className="flex-grow border-t border-stone-200"></div>
-                              <span className="flex-shrink mx-4 text-[10px] text-stone-400 font-bold uppercase tracking-wider">或者：手动粘贴字幕/文稿</span>
-                              <div className="flex-grow border-t border-stone-200"></div>
-                            </div>
-                          )}
-
-                          <div className="flex-1 flex flex-col space-y-3">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-stone-200 bg-white px-3.5 py-3">
-                              <div>
-                                <h4 className="text-xs font-bold text-stone-900">📝 视频文字稿面板</h4>
-                                <p className="mt-1 text-[10px] leading-relaxed text-stone-500">YouTube 播放器里的文字稿不能被网页自动读取。请在 YouTube 点“显示文字稿”并复制，再粘贴到这里。</p>
-                              </div>
-                              <div className="flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => void pasteTranscriptFromClipboard()}
-                                  className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-stone-300 bg-stone-50 px-3 py-2 text-[11px] font-bold text-stone-700 transition hover:border-amber-400 hover:bg-amber-50"
-                                >
-                                  <Clipboard className="h-3.5 w-3.5" />粘贴已复制的文字稿
-                                </button>
-                                <label className="shrink-0 inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] font-bold text-amber-950 transition hover:bg-amber-100">
-                                  <input type="file" accept=".html,.htm,text/html" className="hidden" onChange={handleHtmlSubtitleImport} />
-                                  导入字幕 HTML
-                                </label>
-                                <label className={`shrink-0 inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-950 transition hover:bg-emerald-100 ${isParsingExcel ? 'cursor-wait opacity-60' : 'cursor-pointer'}`}>
-                                  <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={isParsingExcel} onChange={handleExcelImport} />
-                                  {isParsingExcel ? '正在导入…' : '导入 Excel 字幕'}
-                                </label>
-                              </div>
-                            </div>
-                            <p className="text-[10px] leading-relaxed text-stone-500">插件导出包含 Time / Subtitle / Machine Translation 表格的 HTML 时，可直接导入；文件只在本机浏览器解析。</p>
-                            <textarea
-                              rows={16}
-                              value={rawSubtitlePaste}
-                              onPaste={(event) => {
-                                const html = event.clipboardData.getData('text/html');
-                                const richText = html ? subtitleRowsFromHtml(html) : '';
-                                const pasted = richText || event.clipboardData.getData('text/plain');
-                                if (!pasted) return;
-                                event.preventDefault();
-                                const normalized = normalizeTranscriptForImport(pasted);
-                                setRawSubtitlePaste(normalized);
-                                setEditorSubtitles(parseRawTextToSubtitles(normalized));
-                              }}
-                              onChange={(e) => setRawSubtitlePaste(e.target.value)}
-                              placeholder="复制 YouTube 文字稿后，点上方“粘贴已复制的文字稿”，或直接在这里粘贴。
-支持整段英文和带时间轴的文字稿，例如：
-例如：
-Welcome to the library! Today, we are focusing on low-lying coastal urban areas and mitigating climate dangers..."
-                              className="w-full flex-1 p-3 font-mono text-xs bg-stone-50/50 border border-stone-250 rounded-xl focus:border-stone-900 focus:outline-hidden min-h-[320px] resize-y"
-                            />
-
-                            <div className="flex gap-3">
-                              <button
-                                onClick={async () => {
-                                  if (!rawSubtitlePaste.trim()) {
-                                    alert('请先输入文稿或字幕文本内容。');
-                                    return;
-                                  }
-                                  setIsAligningWithAI(true);
-                                  try {
-                                    const data = { subtitles: await alignTranscript() };
-
-                                    if (data && data.subtitles) {
-                                      const sortedSubtitles = cleanAlignedSubtitles(data.subtitles)
-                                        .filter((s: any) => s.text && s.text.trim().length > 0)
-                                        .map((s: any, index: number) => ({
-                                          ...s,
-                                          id: s.id || `s-${Date.now()}-${index}`,
-                                          start: isNaN(parseFloat(s.start)) ? 0 : parseFloat(parseFloat(s.start).toFixed(2)),
-                                          end: isNaN(parseFloat(s.end)) ? 5 : parseFloat(parseFloat(s.end).toFixed(2)),
-                                        }))
-                                        .sort((a, b) => a.start - b.start);
-
-                                      const updatedMaterials = materials.map(m => {
-                                        if (m.id === activeMaterial.id) {
-                                          return {
-                                            ...m,
-                                            videoSubtitles: sortedSubtitles,
-                                            sentences: sortedSubtitles.map(s => s.text)
-                                          };
-                                        }
-                                        return m;
-                                      });
-
-                                      setMaterials(updatedMaterials);
-                                      localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
-                                      
-                                      alert('✨ AI 智能分段并双语对照生成成功！已为您开启精听影子训练系统。');
-                                    } else {
-                                      throw new Error('返回的字幕格式无效');
-                                    }
-                                  } catch (err: any) {
-                                    console.error(err);
-                                    alert('AI 字幕分段失败：' + (err?.name === 'TimeoutError' ? '本批处理超过 2 分钟，原字幕未修改，请稍后重试。' : err.message));
-                                  } finally {
-                                    setIsAligningWithAI(false);
-                                  }
-                                }}
-                                disabled={isAligningWithAI || !rawSubtitlePaste.trim()}
-                                className="flex-grow py-3 bg-amber-450 hover:bg-amber-400 disabled:bg-stone-100 disabled:text-stone-400 text-stone-950 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
-                              >
-                                {isAligningWithAI ? (
-                                  <>
-                                    <span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-amber-950 border-t-transparent"></span>
-                                    <span>{alignmentProgress || '正在准备分批处理…'}</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Sparkles className="h-4 w-4 text-amber-950" />
-                                    <span>🪄 一键 AI 智能分段与对齐</span>
-                                  </>
-                                )}
-                              </button>
-
-                              <button
-                                onClick={() => {
-                                  if (!rawSubtitlePaste.trim()) {
-                                    alert('请先输入文稿或字幕文本内容。');
-                                    return;
-                                  }
-                                  const parsed = parseRawTextToSubtitles(rawSubtitlePaste);
-                                  const sortedSubtitles = [...parsed]
-                                    .filter((s: any) => s.text && s.text.trim().length > 0)
-                                    .map((s: any, index: number) => ({
-                                      ...s,
-                                      id: s.id || `s-${Date.now()}-${index}`,
-                                      start: isNaN(parseFloat(s.start)) ? 0 : parseFloat(parseFloat(s.start).toFixed(2)),
-                                      end: isNaN(parseFloat(s.end)) ? 5 : parseFloat(parseFloat(s.end).toFixed(2)),
-                                    }))
-                                    .sort((a, b) => a.start - b.start);
-
-                                  const updatedMaterials = materials.map(m => {
-                                    if (m.id === activeMaterial.id) {
-                                      return {
-                                        ...m,
-                                        videoSubtitles: sortedSubtitles,
-                                        sentences: sortedSubtitles.map(s => s.text)
-                                      };
-                                    }
-                                    return m;
-                                  });
-
-                                  setMaterials(updatedMaterials);
-                                  localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
-
-                                  setTimeout(() => {
-                                    const currentId = selectedMaterialId;
-                                    setSelectedMaterialId(null);
-                                    setTimeout(() => setSelectedMaterialId(currentId), 20);
-                                  }, 50);
-
-                                  alert('📥 已直接按行导入并保存！现在可以随时点击 “🔧 修正与调整” 来编辑每一行内容。');
-                                }}
-                                disabled={isAligningWithAI || !rawSubtitlePaste.trim()}
-                                className="px-5 py-3 bg-stone-900 hover:bg-stone-800 text-white disabled:bg-stone-100 disabled:text-stone-400 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition cursor-pointer"
-                              >
-                                <Download className="h-4 w-4" />
-                                <span>📥 直接按每行规则导入</span>
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="text-[10px] text-stone-400 leading-normal bg-amber-50/40 p-3 rounded-lg border border-amber-100/30">
-                            💡 <b>提示：</b> AI 只基于你<b>粘贴的真实字幕</b>做切句与中英对照，不会编造内容。若字幕没有时间戳，
-                            AI 会按视频总长（约 <b>{maxSubtitleTime.toFixed(1)} 秒</b>）估算时间，仅供排序展示、不保证与画面逐帧同步；
-                            如需精确跳转，请粘贴<b>带时间戳的字幕</b>，或对 YouTube 用「抓取官方字幕」。生成后可用 “🔧 修正与调整” 微调任意句子。
-                          </div>
-                        </div>
-                      ) : (
-                        /* Case B: Subtitles are active - Render Interactive Bilingual Video Studio */
-                        <div className="space-y-4">
+<div className="space-y-4">
                           
                           {/* Video Player Box */}
                           <div className="bg-stone-950 border border-stone-800 rounded-2xl overflow-hidden shadow-md relative group">
@@ -3751,19 +2225,6 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                   </button>
                                 )}
 
-                                <button
-                                  onClick={() => {
-                                    setIsSubtitleEditorOpen(true);
-                                  }}
-                                  className="text-[10px] bg-amber-450 hover:bg-amber-400 text-stone-950 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-colors shadow-xs cursor-pointer"
-                                  title="导入完整的英文字幕/文本并进行 AI 智能分段"
-                                >
-                                  📥 导入并 AI 分段
-                                </button>
-                                <label className={`text-[10px] bg-emerald-100 hover:bg-emerald-200 text-emerald-950 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-colors border border-emerald-200 ${isParsingExcel ? 'cursor-wait opacity-60' : 'cursor-pointer'}`}>
-                                  <input type="file" accept=".xlsx,.xls,.csv" className="hidden" disabled={isParsingExcel} onChange={handleActiveMaterialExcelImport} />
-                                  {isParsingExcel ? '正在导入…' : '📊 导入 Excel'}
-                                </label>
                               </div>
                             </div>
 
@@ -3801,18 +2262,8 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                   <div className="space-y-1 max-w-md mx-auto">
                                     <p className="text-xs font-serif font-bold text-stone-800">当前视频暂无中英对照双语字幕</p>
                                     <p className="text-[11px] text-stone-500 leading-relaxed">
-                                      请点击下方导入按钮，粘贴视频的完整英文文稿、字幕文本或听力段落。顶级 AI 大模型将自动为您智能断句并一键生成严谨雅思级双语翻译，开启影子跟读精听！
+                                      管理员尚未发布这份材料的字幕。字幕发布后会显示在这里，并按视频进度自动高亮。
                                     </p>
-                                  </div>
-                                  <div className="flex justify-center pt-1.5">
-                                    <button
-                                      onClick={() => {
-                                        setIsSubtitleEditorOpen(true);
-                                      }}
-                                      className="text-[11px] bg-amber-450 hover:bg-amber-400 text-stone-950 font-bold py-2.5 px-5 rounded-xl flex items-center gap-1.5 transition shadow-xs cursor-pointer"
-                                    >
-                                      📥 导入字幕并 AI 智能分段
-                                    </button>
                                   </div>
                                 </div>
                               ) : (
@@ -3948,7 +2399,6 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                           )}
 
                         </div>
-                      )}
 
                     </div>
                   ) : (
@@ -4178,8 +2628,8 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                             <div className="flex flex-col items-center justify-center py-24 text-center space-y-3.5">
                               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600"></div>
                               <div className="space-y-1">
-                                <p className="text-xs font-bold text-stone-700">百炼正在识别音频并生成逐句文本...</p>
-                                <p className="text-[11px] text-stone-400">识别完成后会保存英文文本与时间轴；中文翻译会在可用时一并生成。</p>
+                                <p className="text-xs font-bold text-stone-700">AI 正在整理学习内容...</p>
+                                <p className="text-[11px] text-stone-400">整理完成后会在这里显示材料内容。</p>
                               </div>
                             </div>
                           ) : isTranslatingByLine ? (
@@ -4190,64 +2640,10 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                 <p className="text-[11px] text-stone-400">我们将对篇章按语意拆分，并生成精准中英双语逐句对照，请耐心稍候</p>
                               </div>
                             </div>
-                          ) : activeMaterial.type === 'audio' && !showAudioTranscript ? (
-                            <div className="flex flex-col items-center justify-center py-16 px-6 bg-stone-50/50 border border-dashed border-stone-200 rounded-2xl text-center space-y-3.5">
-                              <div className="p-3 bg-stone-100 rounded-full text-stone-400">
-                                <EyeOff className="h-6 w-6" />
-                              </div>
-                              <div className="space-y-1">
-                                <h4 className="text-xs font-bold text-stone-700">听写文本已遮蔽</h4>
-                                <p className="text-[11px] text-stone-400 max-w-sm leading-relaxed">
-                                  为了锻炼你的雅思听力拼写与默写能力，当前的转写文本及翻译已被隐藏。点击右上方“显示文本”按钮可随时开启对照。
-                                </p>
-                              </div>
-                              <button
-                                onClick={() => setShowAudioTranscript(true)}
-                                className="px-3 py-1.5 bg-stone-900 hover:bg-stone-850 text-white text-[11px] font-semibold rounded-lg shadow-sm transition"
-                              >
-                                👁️ 显示听写文本
-                              </button>
-                            </div>
-                          ) : activeMaterial.type === 'audio' && (
-                            !activeMaterial.sentences?.length ||
-                            /^正在加载本地音频|录入后可点击一键AI智能转写/i.test((activeMaterial.content || '').trim())
-                          ) ? (
-                            <div className="flex flex-col items-center justify-center py-16 px-6 bg-amber-50/20 border border-dashed border-amber-200 rounded-2xl text-center space-y-4 w-full">
-                              <div className="p-3.5 bg-amber-50 rounded-full text-amber-600">
-                                <Sparkles className="h-5 w-5 animate-bounce" />
-                              </div>
-                              <div className="space-y-1 max-w-sm">
-                                <h4 className="text-xs font-bold text-stone-900">🎧 暂无音频听抄文稿</h4>
-                                <p className="text-[10.5px] text-stone-500 leading-relaxed">
-                                  该音频材料还没有逐句听写文稿。请使用已配置的阿里云百炼语音识别生成文本。
-                                </p>
-                              </div>
-                              <button
-                                onClick={handleAITranscribe}
-                                disabled={isSummarizing || isTranscribingMedia}
-                                className="py-2.5 px-5 bg-amber-400 hover:bg-amber-300 disabled:bg-stone-100 disabled:text-stone-400 text-stone-950 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
-                              >
-                                {isSummarizing || isTranscribingMedia ? transcribingMediaMessage : '🎧 使用百炼识别音频并生成逐句听写'}
-                              </button>
-                              <input
-                                ref={replaceAudioFileInputRef}
-                                type="file"
-                                accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac"
-                                className="hidden"
-                                onChange={event => {
-                                  const file = event.target.files?.[0];
-                                  if (file) void handleAITranscribe(file);
-                                  event.target.value = '';
-                                }}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => replaceAudioFileInputRef.current?.click()}
-                                disabled={isSummarizing || isTranscribingMedia}
-                                className="text-[10px] text-stone-500 underline underline-offset-2 hover:text-stone-800 disabled:opacity-50"
-                              >
-                                音频缓存丢失或想更换文件？重新选择并识别（保留材料）
-                              </button>
+                          ) : activeMaterial.type === 'audio' ? (
+                            <div className="flex flex-col items-center justify-center py-16 px-6 bg-stone-50 border border-dashed border-stone-200 rounded-2xl text-center space-y-2">
+                              <h4 className="text-xs font-bold text-stone-800">暂无已发布的音频文字稿</h4>
+                              <p className="text-[11px] text-stone-500">学习文字稿由管理员整理后发布。</p>
                             </div>
                           ) : activeMaterial.content ? (
                             readingMode === 'sentence' && lineTranslationsMap[activeMaterial.id] ? (
@@ -4344,43 +2740,10 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                               </div>
                             )
                           ) : (
-                            <p className="text-stone-400 italic py-10 text-center">暂无内容，请在左侧目录上传或新增文稿内容。</p>
+                            <p className="text-stone-400 italic py-10 text-center">管理员尚未发布这份材料的学习文本。</p>
                           )}
                         </div>
 
-                        {/* Custom Audio Element Player (if audio url is valid) */}
-                        {activeMaterial.type === 'audio' && activeAudioUrl && (
-                          <div className="mt-4 p-3.5 bg-stone-50 rounded-xl border border-stone-200/70 space-y-3">
-                            <div className="flex items-center gap-2">
-                              <Volume2 className="h-4 w-4 text-amber-600 shrink-0" />
-                              <span className="text-xs font-semibold text-stone-700">音频播放器控制</span>
-                            </div>
-                            
-                            <audio 
-                              ref={audioRef}
-                              src={activeAudioUrl} 
-                              controls 
-                              className="w-full h-8 outline-hidden"
-                            />
-
-                            <div className="flex items-center gap-2 pt-1">
-                              <button
-                                onClick={() => skipAudio(-15)}
-                                className="flex-1 py-1.5 px-3 bg-white hover:bg-stone-100 active:bg-stone-200 border border-stone-200/80 text-stone-700 rounded-lg text-xs font-semibold cursor-pointer transition flex items-center justify-center gap-1"
-                                title="后退 15 秒"
-                              >
-                                ⏪ 后退 15s
-                              </button>
-                              <button
-                                onClick={() => skipAudio(15)}
-                                className="flex-1 py-1.5 px-3 bg-white hover:bg-stone-100 active:bg-stone-200 border border-stone-200/80 text-stone-700 rounded-lg text-xs font-semibold cursor-pointer transition flex items-center justify-center gap-1"
-                                title="快进 15 秒"
-                              >
-                                快进 15s ⏩
-                              </button>
-                            </div>
-                          </div>
-                        )}
                       </div>
 
                     </div>
@@ -4479,14 +2842,14 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                             )}
                           </div>
 
-                          {/* ASR Correction Indicator */}
+                          {/* Contextual spelling correction indicator */}
                           {translationResult.isCorrected && (
                             <div className="bg-amber-50 border border-amber-200 text-amber-900 p-2.5 rounded-lg flex flex-col gap-1">
                               <span className="font-bold text-[10.5px] flex items-center gap-1">
-                                ⚠️ ASR语音识别/拼写自动纠错
+                                ⚠️ 可能的拼写错误
                               </span>
                               <p className="text-[10px] leading-normal text-amber-850">
-                                {translationResult.correctionExplanation || `检测到输入可能存在语音识别或拼写错误。已自动将词汇纠正为标准学术表达：`}
+                                {translationResult.correctionExplanation || `检测到输入可能存在拼写错误。已结合上下文给出标准表达：`}
                               </p>
                               <div className="text-[9.5px] text-stone-600 font-mono mt-0.5">
                                 划选原文: <span className="line-through text-red-500 font-sans">"{selectionState?.text}"</span> ➔ 修正后: <span className="font-bold text-emerald-700 font-sans">"{translationResult.word}"</span>
@@ -4843,347 +3206,6 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
 
       </div>
 
-      {/* 📥 Subtitle Smart Import Studio Modal */}
-      {isSubtitleEditorOpen && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl border border-stone-200 overflow-hidden animate-fade-in">
-            {/* Header */}
-            <div className="bg-stone-900 text-white p-4.5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-amber-400" />
-                <div>
-                  <h3 className="font-serif font-bold text-base leading-tight">📥 智能双语字幕导入与 AI 自动断句</h3>
-                  <p className="text-[10px] text-stone-400 font-sans mt-0.5">
-                    粘贴自己从 YouTube 获取的文字稿，字幕会保存在当前视频材料中。
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsSubtitleEditorOpen(false)}
-                className="text-stone-400 hover:text-white p-1 rounded-lg hover:bg-stone-800 transition"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Modal Body Container with scrolling */}
-            <div className="flex-1 overflow-y-auto p-5 space-y-4">
-
-              <div className="space-y-4">
-                <div className="bg-stone-50 border rounded-xl p-4 space-y-2.5">
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                      <h4 className="text-xs font-bold text-stone-900">📥 粘贴视频英文文稿、文字稿或带时间轴的字幕:</h4>
-                      <button
-                        type="button"
-                        onClick={() => void pasteTranscriptFromClipboard()}
-                        className="inline-flex items-center justify-center gap-1.5 self-start rounded-lg border border-stone-300 bg-white px-3 py-2 text-[10px] font-bold text-stone-700 transition hover:border-amber-400 hover:bg-amber-50"
-                      >
-                        <Clipboard className="h-3.5 w-3.5" />粘贴剪贴板文字稿
-                      </button>
-                    </div>
-                    <p className="text-[11px] text-stone-500 leading-relaxed">
-                      先在 YouTube 视频菜单中打开“显示文字稿”，复制文字稿，再点右侧按钮放入输入框。浏览器不会允许网页直接读取播放器内部内容。<br/>
-                      1. <b>🪄 AI 自动断句与翻译 (极力推荐):</b> 您可以粘贴任何一长段、杂乱或未分句的英文文稿，点击下方按钮。AI 将按真实文稿切分为逐句中英字幕；没有时间戳时会估算时间，不能保证逐帧同步。<br/>
-                      2. <b>传统文本直接导入:</b> 按回车换行拆分每一行字幕。如果以 <code className="font-mono bg-stone-100 px-1 py-0.5 text-red-600">[0.0-5.5] English | Chinese</code> 的标准格式贴入，系统将自动高精度解包该时间段。
-                    </p>
-
-                    {/(youtube\.com|youtu\.be)/i.test(ccVideoUrl) && (
-                      <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-900">
-                        在 YouTube 播放器菜单中选择“显示文字稿”，复制字幕后粘贴到下方。没有文字稿时，请先自行取得可用的字幕或文稿。
-                      </p>
-                    )}
-
-                    {!/(youtube\.com|youtu\.be)/i.test(activeMaterial?.url || '') && <input
-                      ref={mediaFileInputRef}
-                      type="file"
-                      accept="audio/*,video/mp4,video/webm,video/quicktime,video/x-msvideo,video/mpeg,video/3gpp,.mp3,.m4a,.wav,.ogg,.flac,.aac,.mp4,.mov,.avi,.webm,.wmv,.mpeg,.mpg,.3gp"
-                      className="hidden"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        if (file) void handleTranscribeMediaFile(file);
-                      }}
-                    />}
-                    {!/(youtube\.com|youtu\.be)/i.test(activeMaterial?.url || '') && <button
-                      type="button"
-                      onClick={() => mediaFileInputRef.current?.click()}
-                      disabled={isTranscribingMedia}
-                      className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-950 transition hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {isTranscribingMedia ? transcribingMediaMessage : '上传对应音频/视频，生成本材料字幕'}
-                    </button>}
-                    {!/(youtube\.com|youtu\.be)/i.test(activeMaterial?.url || '') && <p className="text-[10px] text-stone-500">
-                      适用于没有字幕的内容。选择本地 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM 文件，单个文件最大 200 MB；需先在「账号与设置 → 语音识别」配置百炼 API Key。
-                    </p>}
-
-                    <textarea
-                      rows={18}
-                      value={rawSubtitlePaste}
-                      onPaste={(event) => {
-                        const pasted = event.clipboardData.getData('text/plain');
-                        if (!pasted) return;
-                        event.preventDefault();
-                        const normalized = normalizeTranscriptForImport(pasted);
-                        setRawSubtitlePaste(normalized);
-                        setEditorSubtitles(parseRawTextToSubtitles(normalized));
-                      }}
-                      onChange={(e) => handleTextareaChange(e.target.value)}
-                      placeholder="支持格式(可以直接贴入整段英文段落)：
-例1（直接贴英文段落，系统将为您切句对时）：
-Welcome to the library! Today, we are focusing on low-lying coastal urban areas and mitigating climate dangers...
-
-例2（带时间戳的标准解析格式，每行一句）：
-[0.0-5.2] Welcome back to my study vlog! | 欢迎回到我的学习VLOG！
-[5.2-12.0] Today we are analyzing high-scoring IELTS collocations. | 今天我们正在分析雅思高分词伙搭配。"
-                      className="w-full p-3 font-mono text-xs bg-white border border-stone-250 rounded-xl focus:border-stone-900 focus:outline-hidden min-h-[380px] resize-y"
-                    />
-
-                    <div className="flex gap-3">
-                      <button
-                        onClick={handleAIAlignSubtitles}
-                        disabled={isAligningWithAI}
-                        className="flex-1 py-2.5 bg-amber-450 hover:bg-amber-400 disabled:bg-stone-200 disabled:text-stone-400 text-stone-950 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition"
-                      >
-                        {isAligningWithAI ? (
-                          <>
-                            <span className="animate-spin rounded-full h-3 w-3 border-2 border-amber-800 border-t-transparent"></span>
-                            {alignmentProgress || '正在准备分批处理…'}
-                          </>
-                        ) : (
-                          <>
-                            <Sparkles className="h-3.5 w-3.5 text-amber-950 animate-pulse" />
-                            🪄 AI 自动断句并生成逐句翻译
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        onClick={handleDirectTextImport}
-                        disabled={isAligningWithAI}
-                        className="flex-1 py-2.5 bg-stone-900 hover:bg-stone-850 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition"
-                      >
-                        📥 按每行文本规则直接导入
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-              {/* Unified Subtitle Paragraph Review & Edit List */}
-              {editorSubtitles.length > 0 && (
-                <div className="space-y-4 pt-6 border-t border-stone-200">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-xs font-bold text-stone-850 flex items-center gap-1.5">
-                        📖 当前待导入的逐句双语字幕预览 (共 {editorSubtitles.length} 句)
-                      </h4>
-                      <p className="text-[10px] text-stone-400 mt-0.5">
-                        您可以直接在下方表格中微调时间、修改文字或删除单句。修改完成后点击右下角 “保存修改并关闭” 生效。
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const newId = `s-new-${Date.now()}`;
-                        const lastSub = editorSubtitles[editorSubtitles.length - 1];
-                        const nextStart = lastSub ? parseFloat((lastSub.end + 0.1).toFixed(1)) : 0;
-                        const newSubtitles = [
-                          ...editorSubtitles,
-                          {
-                            id: newId,
-                            start: nextStart,
-                            end: nextStart + 5.0,
-                            text: '',
-                            translation: ''
-                          }
-                        ];
-                        setEditorSubtitles(newSubtitles);
-                        setRawSubtitlePaste(formatSubtitlesToRawText(newSubtitles));
-                      }}
-                      className="bg-stone-900 hover:bg-stone-800 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1 transition"
-                    >
-                      ➕ 新增双语字幕单句
-                    </button>
-                  </div>
-
-                  <div className="border border-stone-200 rounded-xl overflow-hidden shadow-xs max-h-[400px] overflow-y-auto">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="bg-stone-50 border-b border-stone-200 text-[10px] font-mono text-stone-500 uppercase tracking-wider sticky top-0 z-10">
-                          <th className="p-2.5 w-[90px] text-center bg-stone-50">开始时间(s)</th>
-                          <th className="p-2.5 w-[90px] text-center bg-stone-50">结束时间(s)</th>
-                          <th className="p-2.5 bg-stone-50">英文原文字幕 (English Sentence)</th>
-                          <th className="p-2.5 bg-stone-50">中文翻译对照 (Chinese Translation)</th>
-                          <th className="p-2.5 w-[60px] text-center bg-stone-50">操作</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-stone-150 text-xs">
-                        {editorSubtitles.map((sub, idx) => (
-                          <tr key={sub.id || idx} className="hover:bg-stone-50/40">
-                            <td className="p-2">
-                              <input
-                                type="number"
-                                step="0.1"
-                                min="0"
-                                value={sub.start}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  const updated = editorSubtitles.map(s => s.id === sub.id ? { ...s, start: isNaN(val) ? 0 : val } : s);
-                                  setEditorSubtitles(updated);
-                                  setRawSubtitlePaste(formatSubtitlesToRawText(updated));
-                                }}
-                                className="w-full px-1.5 py-1 bg-white border border-stone-200 rounded-md font-mono text-center text-xs text-stone-850 focus:border-amber-450 focus:outline-hidden"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <input
-                                type="number"
-                                step="0.1"
-                                min="0"
-                                value={sub.end}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  const updated = editorSubtitles.map(s => s.id === sub.id ? { ...s, end: isNaN(val) ? 0 : val } : s);
-                                  setEditorSubtitles(updated);
-                                  setRawSubtitlePaste(formatSubtitlesToRawText(updated));
-                                }}
-                                className="w-full px-1.5 py-1 bg-white border border-stone-200 rounded-md font-mono text-center text-xs text-stone-850 focus:border-amber-450 focus:outline-hidden"
-                              />
-                            </td>
-                            <td className="p-2">
-                              <textarea
-                                rows={2}
-                                value={sub.text}
-                                onChange={(e) => {
-                                  const updated = editorSubtitles.map(s => s.id === sub.id ? { ...s, text: e.target.value } : s);
-                                  setEditorSubtitles(updated);
-                                  setRawSubtitlePaste(formatSubtitlesToRawText(updated));
-                                }}
-                                className="w-full px-2 py-1.5 bg-white border border-stone-250 rounded-md text-xs text-stone-850 focus:border-amber-450 focus:outline-hidden resize-y min-h-[50px] leading-relaxed"
-                                placeholder="请输入英文单句内容..."
-                              />
-                            </td>
-                            <td className="p-2">
-                              <textarea
-                                rows={2}
-                                value={sub.translation}
-                                onChange={(e) => {
-                                  const updated = editorSubtitles.map(s => s.id === sub.id ? { ...s, translation: e.target.value } : s);
-                                  setEditorSubtitles(updated);
-                                  setRawSubtitlePaste(formatSubtitlesToRawText(updated));
-                                }}
-                                className="w-full px-2 py-1.5 bg-white border border-stone-250 rounded-md text-xs text-stone-850 focus:border-amber-450 focus:outline-hidden resize-y min-h-[50px] leading-relaxed"
-                                placeholder="在此输入中文翻译对照..."
-                              />
-                            </td>
-                            <td className="p-2 text-center">
-                              <button
-                                onClick={() => {
-                                  const updated = editorSubtitles.filter(s => s.id !== sub.id);
-                                  setEditorSubtitles(updated);
-                                  setRawSubtitlePaste(formatSubtitlesToRawText(updated));
-                                }}
-                                className="p-1.5 hover:bg-red-50 text-stone-400 hover:text-red-500 rounded-lg transition"
-                                title="删除这一句"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-            </div>
-
-            {/* Modal Footer Controls */}
-            <div className="bg-stone-50 border-t border-stone-200 p-4 flex items-center justify-between">
-              <span className="text-[11px] font-mono font-bold text-stone-400">
-                当前待保存条数: <b className="text-stone-700">{editorSubtitles.length}</b> 句字幕
-              </span>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setIsSubtitleEditorOpen(false)}
-                  className="px-4 py-2 bg-stone-200 hover:bg-stone-300 text-stone-700 rounded-xl text-xs font-bold transition"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={handleSaveSubtitleEdits}
-                  className="px-5 py-2 bg-amber-450 hover:bg-amber-400 text-stone-950 rounded-xl text-xs font-extrabold shadow-sm transition flex items-center gap-1.5"
-                >
-                  <Check className="h-3.5 w-3.5 text-stone-950" />
-                  保存修改并关闭
-                </button>
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* 📝 Rename Material Custom Modal */}
-      {isRenameModalOpen && (
-        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md flex flex-col shadow-2xl border border-stone-200 overflow-hidden animate-fade-in">
-            {/* Header */}
-            <div className="bg-stone-900 text-white p-4.5 flex items-center justify-between">
-              <span className="font-serif font-bold text-sm tracking-wide">✏️ 重命名备考材料</span>
-              <button 
-                onClick={() => {
-                  setIsRenameModalOpen(false);
-                  setRenamingMaterialId(null);
-                  setRenamingMaterialName('');
-                }}
-                className="text-stone-400 hover:text-white transition text-lg leading-none"
-              >
-                &times;
-              </button>
-            </div>
-
-            {/* Form Content */}
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              handleSaveRenameMaterial();
-            }} className="p-5 space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-stone-500 block">新材料名称</label>
-                <input
-                  type="text"
-                  autoFocus
-                  value={renamingMaterialName}
-                  onChange={(e) => setRenamingMaterialName(e.target.value)}
-                  placeholder="请输入新的备考材料名称"
-                  className="w-full px-3 py-2 bg-stone-50 border border-stone-250 rounded-xl text-xs text-stone-900 focus:border-stone-900 focus:outline-hidden leading-relaxed"
-                />
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-2 justify-end pt-3 border-t border-stone-100">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsRenameModalOpen(false);
-                    setRenamingMaterialId(null);
-                    setRenamingMaterialName('');
-                  }}
-                  className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-600 hover:text-stone-900 rounded-xl text-xs font-semibold transition"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  disabled={!renamingMaterialName.trim()}
-                  className="px-5 py-2 bg-amber-450 hover:bg-amber-400 disabled:bg-stone-200 disabled:text-stone-400 text-stone-950 rounded-xl text-xs font-extrabold shadow-xs transition"
-                >
-                  确认修改
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
     </div>
   );

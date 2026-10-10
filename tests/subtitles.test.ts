@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { anchorSubtitleTimes, alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitlesToOriginalTranscript, subtitleAtTime } from '../src/lib/subtitles';
-import { cleanAsrSubtitleCues, refineAsrSubtitles } from '../server/lib/subtitleRefinement';
+import { cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitlesToOriginalTranscript, subtitleAtTime } from '../src/lib/subtitles';
 import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from '../server/lib/subtitleSheetGrouping';
 import { parseSubtitleSheetRows } from '../src/lib/subtitleSheet';
 test('highlight follows media time after speed changes, seeks, and silent gaps', () => {
@@ -44,66 +43,6 @@ test('import normalization recovers flattened transcript table rows and drops ma
   assert.match(normalized, /\[7-11\] How\'m I going to make the best baby ever under an hour and be at work on/);
   assert.match(normalized, /\[11-14\] time\. Three, two, one\. Smile\./);
   assert.doesNotMatch(normalized, /Machine Translation|\[music\]/i);
-});
-
-test('ASR subtitle refinement groups adjacent cues using model indexes and preserves source text and times', async () => {
-  let prompt = '';
-  const llm: any = { models: { generateContent: async (params: any) => {
-    prompt = params.contents;
-    return { text: JSON.stringify({ groups: [{ startCue: 0, endCue: 1 }, { startCue: 2, endCue: 2 }] }) };
-  } } };
-  const result = await refineAsrSubtitles([
-    { id: 'a', start: 0, end: 1, text: 'I wanted', translation: '' },
-    { id: 'b', start: 1.1, end: 2.5, text: 'to go home.', translation: '' },
-    { id: 'music', start: 3, end: 4, text: '[music]', translation: '' },
-    { id: 'c', start: 5, end: 6, text: 'Goodbye!', translation: '' },
-  ], llm);
-  assert.match(prompt, /Do not return or rewrite any subtitle text/);
-  assert.deepEqual(result.map(({ id, start, end, text }) => ({ id, start, end, text })), [
-    { id: 'a', start: 0, end: 2.5, text: 'I wanted to go home.' },
-    { id: 'c', start: 5, end: 6, text: 'Goodbye!' },
-  ]);
-});
-
-test('ASR subtitle refinement rejects model groups that omit source cues', async () => {
-  const llm: any = { models: { generateContent: async () => ({ text: '{"groups":[{"startCue":0,"endCue":0}]}' }) } };
-  await assert.rejects(refineAsrSubtitles([
-    { id: 'a', start: 0, end: 1, text: 'Hello.', translation: '' },
-    { id: 'b', start: 1, end: 2, text: 'Goodbye.', translation: '' },
-  ], llm), /覆盖全部识别内容/);
-  assert.equal(cleanAsrSubtitleCues([{ id: 'music', start: 0, end: 1, text: '[music]', translation: '' }]).length, 0);
-});
-
-test('segmentation anchors to real source cues and rejects omissions or rewrites', () => {
-  const raw = '[10-14] Hello world. Next sentence. | 翻译\n[20-22] Goodbye now. | 再见';
-  const output = ['Hello world.', 'Next sentence.', 'Goodbye now.'].map((text, i) => ({ id: String(i), start: 0, end: 1, text }));
-  assert.deepEqual(anchorSubtitleTimes(raw, output).map(s => [s.start, s.end]), [[10, 12], [12, 14], [20, 22]]);
-  assert.throws(() => anchorSubtitleTimes(raw, output.slice(0, 2)), /部分字幕/);
-  assert.throws(() => anchorSubtitleTimes(raw, [{ ...output[0], text: 'Invented words.' }]), /遗漏或改写/);
-});
-
-test('long transcripts are batched with absolute timestamps and actionable configuration errors', async () => {
-  const original = globalThis.fetch;
-  const lines = Array.from({ length: 200 }, (_, i) => `[${i * 4}-${i * 4 + 3}] This is sentence number ${i}. | 中文翻译`);
-  let calls = 0;
-  const progress: number[] = [];
-  try {
-    globalThis.fetch = async (_url, options) => {
-      calls++;
-      const { rawText } = JSON.parse(String(options?.body));
-      assert.ok(rawText.length < 6000);
-      return Response.json({ subtitles: rawText.split('\n').map((line: string) => ({ start: 0, end: 1, text: line.replace(/^\[[^\]]+\]\s*/, '').split('|')[0].trim() })) });
-    };
-    const result = await alignSubtitleBatches(lines.join('\n'), 800, done => progress.push(done));
-    assert.ok(calls > 1);
-    assert.equal(result.length, 200);
-    assert.equal(result[199].start, 796);
-    assert.equal(result[199].end, 799);
-    assert.equal(new Set(result.map(s => s.id)).size, 200);
-    assert.equal(progress.at(-1), calls);
-    globalThis.fetch = async () => Response.json({ error: 'LLM_NOT_CONFIGURED' }, { status: 403 });
-    await assert.rejects(alignSubtitleBatches(lines[0], 10, () => {}), /文本 AI 模型/);
-  } finally { globalThis.fetch = original; }
 });
 
 test('spreadsheet cue balancing splits oversized captions and joins nearby tiny fragments', () => {

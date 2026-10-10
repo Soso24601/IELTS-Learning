@@ -5,22 +5,12 @@
 
 import express from 'express';
 import path from 'path';
-import { createWriteStream } from 'node:fs';
-import { unlink, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import { randomBytes, randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import { Type } from '@google/genai';
 import { installUserSystem } from './server/lib/routes';
-import { getASRConfigForUser, getLLMClientForRequest } from './server/lib/llm';
+import { isAdminUser } from './server/lib/auth';
 import { assertSafeHttpUrl } from './server/lib/net';
-import { downloadYoutubeAudio, youtubeVideoId } from './server/lib/youtubeAudio';
-import { splitAudio, parallelTranscribe, type ASRResult } from './server/lib/parallelAsr';
-import { transcribeQwenFile } from './server/lib/qwenAsr';
 import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from './server/lib/subtitleSheetGrouping';
-import { cleanAsrSubtitleCues, refineAsrSubtitles } from './server/lib/subtitleRefinement';
 import { createServer as createViteServer } from 'vite';
 import { createRequire } from 'module';
 import * as XLSX from 'xlsx';
@@ -33,25 +23,6 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-
-type TranscriptionJob = {
-  ownerId: number;
-  status: 'processing' | 'completed' | 'failed';
-  message: string;
-  result?: { transcript: string; warning?: string; subtitles: { id: string; start: number; end: number; text: string; translation: string }[] };
-  error?: string;
-  updatedAt: number;
-};
-const transcriptionJobs = new Map<string, TranscriptionJob>();
-const activeASRUploads = new Set<number>();
-const temporaryMedia = new Map<string, { path: string; mimeType: string }>();
-
-app.get('/api/asr/media/:token', (req, res) => {
-  const media = temporaryMedia.get(req.params.token);
-  if (!media) return res.status(404).end();
-  res.set({ 'Content-Type': media.mimeType, 'Cache-Control': 'no-store, private', 'X-Content-Type-Options': 'nosniff' });
-  res.sendFile(media.path, (error) => { if (error && !res.headersSent) res.status(404).end(); });
-});
 
 // Initialize express middlewares with higher limits for base64 file uploads
 app.use(express.json({ limit: '50mb' }));
@@ -446,6 +417,7 @@ app.post('/api/gemini/chat', async (req, res) => {
 
 // Parse PDF, DOCX, or TXT file from base64
 app.post('/api/materials/parse-file', async (req, res) => {
+  if (!isAdminUser((req as any).userId)) return res.status(403).json({ error: '材料文件解析功能仅供管理员使用。' });
   try {
     const { base64, fileName, fileType } = req.body;
     if (!base64) {
@@ -494,6 +466,7 @@ app.post('/api/materials/parse-file', async (req, res) => {
 
 // Parse Excel or CSV file from base64, extract text rows, and use Gemini to intelligently segment and translate
 app.post('/api/materials/parse-excel', async (req, res) => {
+  if (!isAdminUser((req as any).userId)) return res.status(403).json({ error: '材料文件解析功能仅供管理员使用。' });
   try {
     const { base64, fileName, duration } = req.body;
     if (!base64) {
@@ -615,6 +588,7 @@ ${combinedRawText.slice(0, 40000)}
 
 // Preserve workbook words and timestamps; the model only proposes contiguous cue groups.
 app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
+  if (!isAdminUser((req as any).userId)) return res.status(403).json({ error: '只有管理员可以导入共享字幕。' });
   try {
     const { base64 } = req.body;
     if (!base64) return res.status(400).json({ error: '缺少字幕文件。' });
@@ -647,18 +621,9 @@ app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
     if (rows.length > 500) return res.status(400).json({ error: '最多支持 500 条字幕，请拆分文件。' });
     const sourceCueCount = rows.length;
     const segmentedRows = splitSubtitleSheetCues(rows);
-    const ai = await getLLMClientForRequest(req);
-    const allGroups: number[][] = [];
-    for (let offset = 0; offset < segmentedRows.length; offset += 60) {
-      const batch = segmentedRows.slice(offset, offset + 60);
-      const prompt = `只把相邻字幕碎片合并成易读、适合跟读的句子。必须返回 JSON {"groups":[[0,1],[2],[3,4]]}，数字是局部行号；每个行号必须按顺序恰好出现一次，且每组连续。通常每组 5-18 个英文词，最多 24 词；时间间隔超过 8 秒不得合并。不要改写字幕或输出时间。\n${JSON.stringify(batch.map((r, i) => ({ i, time: r.time, text: r.text })))}`;
-      const response = await ai.models.generateContent({ model: 'gemini-3.6-flash', contents: prompt, config: { responseMimeType: 'application/json', responseSchema: { type: Type.OBJECT, properties: { groups: { type: Type.ARRAY, items: { type: Type.ARRAY, items: { type: Type.NUMBER } } } }, required: ['groups'] } } });
-      const candidate = safeJSONParse(response.text)?.groups as number[][];
-      const flattened = Array.isArray(candidate) ? candidate.flat() : [];
-      if (!Array.isArray(candidate) || flattened.length !== batch.length || flattened.some((n, i) => n !== i) || candidate.some(g => !Array.isArray(g) || !g.length)) throw new Error('AI 分段未完整覆盖字幕，原始字幕未修改。请重试。');
-      allGroups.push(...candidate.map(g => g.map(i => i + offset)));
-    }
-    const balancedGroups = balanceSubtitleCueGroups(allGroups, segmentedRows);
+    // This is an admin import of a prepared caption sheet; deterministic grouping
+    // keeps publication independent of a user-configured AI provider.
+    const balancedGroups = balanceSubtitleCueGroups([segmentedRows.map((_row, index) => index)], segmentedRows);
     const subtitles = balancedGroups.map((group, i) => {
       const first = segmentedRows[group[0]], last = segmentedRows[group[group.length - 1]], next = segmentedRows[group[group.length]];
       const gap = next ? next.time - last.time : 4;
@@ -674,103 +639,6 @@ app.post('/api/materials/parse-subtitle-sheet', async (req, res) => {
   }
 });
 
-// AI subtitle alignment and smart sentence reconstruction
-app.post('/api/gemini/align-subtitles', async (req, res) => {
-  try {
-    const { rawText, duration } = req.body;
-    if (!rawText) {
-      return res.status(400).json({ error: 'Raw text is required' });
-    }
-
-    const ai = await getLLMClientForRequest(req);
-    const prompt = `你是一个顶级的雅思听力/口语教学专家，擅长多媒体字幕与高分学术逐句对齐断句处理。
-我们有一段英文视频原稿、听力文本或带有时间轴的原始字幕文本：
-"""
-${rawText}
-"""
-
-请执行以下任务：
-1. 【高精度智能逐句断句（Sentence-by-Sentence Segmentation）】：
-   - 只调整断句和标点，必须逐词保留英文原文，禁止改写、增删、纠错或改变单词顺序。
-   - 仔细分析输入的文本。
-   - 识别出每一个【完整的英文单句】（以句号、问号、叹号或明确的语义意群为分界线，即逐句断句）。
-   - 不要合并为长篇大论的段落，也不要把单个完整句子切得支离破碎（严禁把单行两三个单词切碎成独立项，必须是一个主谓宾语义完整、发音自然的完整单句）。
-   - 确保完全覆盖输入文稿中的所有英文内容，不遗漏任何一句话。
-
-2. 【时间轴高精度分配/保留】：
-   - 【如果原文本带有时间戳/时间线】：请提取、保留并分配每句话原本的开始时间(start)和结束时间(end)。确保每句时间范围与原文发音同步，严禁凭空乱编或抹除。
-   - 【如果原文本完全不带时间轴】：则根据视频设定的总时长（约 ${duration || 120} 秒），按照各句英文单词数占总单词数的比例，在时间轴上【无缝且连续地平滑分配】每句的起止秒数。确保第一句从 0.0s 开始，上一段的结束时间就是下一段的开始时间，最后一段的结束时间贴近总时长。
-
-3. 【雅思学术级逐句对照翻译】：
-   - 为每一句英文单独生成严谨、生动、符合雅思听力和影子跟读习惯的学术级中文翻译对照。
-
-🔴🔴🔴 【极其重要：严禁截断，严禁限制数量】 🔴🔴🔴
-- 绝对不能只返回几句或截断（严禁只返回 5 个或少量字幕）！
-- 无论输入的文本有多长，你都必须对文中的每一句英文、每一条原始字幕进行完整的断句与翻译。
-- 确保返回的 "subtitles" 数组包含所有的英文单句。如果有 10 句、20 句、50 句甚至 100 句，你就必须全部处理并返回。绝对不能只处理前 5 句！有多少句就必须返回多少句，直至整篇英文原稿全部对齐断句翻译完成，绝对不能遗漏任何一处。
-
-返回格式必须为标准的 JSON，包含 "subtitles" 数组：
-{
-  "subtitles": [
-    {
-      "id": "paste-ai-1",
-      "start": 0.0,
-      "end": 4.5,
-      "text": "The first complete English sentence goes here.",
-      "translation": "对应的第一句学术级中文翻译。"
-    }
-  ]
-}
-`;
-
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            subtitles: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  id: { type: Type.STRING },
-                  start: { type: Type.NUMBER },
-                  end: { type: Type.NUMBER },
-                  text: { type: Type.STRING },
-                  translation: { type: Type.STRING }
-                },
-                required: ['id', 'start', 'end', 'text', 'translation']
-              }
-            }
-          },
-          required: ['subtitles']
-        }
-      }
-    });
-
-    const parsed = safeJSONParse(response.text);
-    if (!Array.isArray(parsed?.subtitles) || parsed.subtitles.length === 0) {
-      return res.status(502).json({ error: '文本模型没有返回 subtitles 字幕数组。请检查当前文本模型的 JSON 输出能力，或在账号设置中切换支持结构化 JSON 输出的模型；原字幕未修改。' });
-    }
-    const invalidSubtitle = parsed.subtitles.some((subtitle: any) =>
-      !subtitle || typeof subtitle.text !== 'string' || !subtitle.text.trim()
-      || !Number.isFinite(Number(subtitle.start)) || !Number.isFinite(Number(subtitle.end))
-      || Number(subtitle.end) <= Number(subtitle.start)
-    );
-    if (invalidSubtitle) {
-      return res.status(502).json({ error: '文本模型返回的字幕缺少有效 text/start/end 字段。请重试或切换支持 JSON 输出的文本模型；原字幕未修改。' });
-    }
-    res.json({ ...parsed, subtitles: parsed.subtitles.map((subtitle: any) => ({ ...subtitle, start: Number(subtitle.start), end: Number(subtitle.end) })) });
-  } catch (error: any) {
-    console.error('Error in align-subtitles:', error);
-    res.status(error.code === 'LLM_NOT_CONFIGURED' ? 403 : 500).json({ error: error.message ||'AI alignment failed' });
-  }
-});
-
-// Context-aware translation & Analysis for IELTS Learning
 app.post('/api/gemini/translate-context', async (req, res) => {
   try {
     const { text, context, category, name } = req.body;
@@ -790,8 +658,8 @@ app.post('/api/gemini/translate-context', async (req, res) => {
       【材料名称】：${name || '未知雅思材料'}
       【雅思科目模块】：${category ? category.toUpperCase() : 'GENERAL'}
       
-      特别任务 (ASR/拼写自动纠错)：
-      由于部分材料可能是用户通过语音识别 (STT/ASR) 音译过来、或存在手打拼写错误的文本。请你仔细评估【待解析内容】在当前上下文语境中是否是一个拼写错误或语音识别错误（例如拼写错误、音近词混淆、语法断裂等）。
+      特别任务（拼写纠错）：
+      请结合上下文判断【待解析内容】是否存在手动输入造成的拼写错误、近形词混淆或语法断裂。
       - 如果你发现有错误，请在返回的 JSON 中，将 "word" 字段设定为【修正后的正确标准学术英文单词/短语】，且将 "isCorrected" 设为 true，并在 "correctionExplanation" 中写明纠错详情。
       - 如果原文拼写完全正确，则将 "word" 设为原文单词/短语，将 "isCorrected" 设为 false，"correctionExplanation" 设为空字符串。
       
@@ -1015,336 +883,6 @@ app.post('/api/gemini/summarize-material', async (req, res) => {
   } catch (error: any) {
     console.error('Error summarizing material:', error);
     res.status(error.code === 'LLM_NOT_CONFIGURED' ? 403 : 500).json({ error: error.message ||'Failed to generate learning summary' });
-  }
-});
-
-function transcriptionOrigin(req: express.Request): string {
-  const origin = new URL(req.header('origin') || '');
-  if (origin.host !== req.header('host') || origin.protocol !== 'https:') {
-    throw new Error('请通过网站的 HTTPS 地址打开页面后重试，百炼需要公开可访问的音频地址。');
-  }
-  return origin.origin;
-}
-
-app.post('/api/asr/transcribe-youtube', (req, res) => {
-  const ownerId = (req as any).userId as number;
-  const config = getASRConfigForUser(ownerId);
-  if (!config) return res.status(403).json({ error: '请先在「账号与设置 → 语音识别」配置百炼 API Key。' });
-  let id: string;
-  let origin: string;
-  try {
-    id = youtubeVideoId(String(req.body?.url || ''));
-    origin = transcriptionOrigin(req);
-  } catch (error: any) { return res.status(400).json({ error: error.message || '视频链接或网站地址无效。' }); }
-  if (activeASRUploads.has(ownerId) || [...transcriptionJobs.values()].some(job => job.ownerId === ownerId && job.status === 'processing')) {
-    return res.status(409).json({ error: '已有转写任务正在处理，请等待完成后再试。' });
-  }
-  if (activeASRUploads.size + [...transcriptionJobs.values()].filter(job => job.status === 'processing').length >= 2) {
-    return res.status(429).json({ error: '服务器正在处理其他音视频，请稍后再试。' });
-  }
-  const jobId = randomUUID();
-  const token = randomBytes(32).toString('hex');
-  const job: TranscriptionJob = { ownerId, status: 'processing', message: '正在获取 YouTube 音轨…', updatedAt: Date.now() };
-  transcriptionJobs.set(jobId, job);
-  res.status(202).json({ jobId });
-  void (async () => {
-    let directory = '';
-    try {
-      directory = await mkdtemp(path.join(tmpdir(), 'ielts-youtube-'));
-      const media = await downloadYoutubeAudio(id, directory);
-      temporaryMedia.set(token, media);
-      job.message = '音轨已获取，正在提交百炼识别…';
-      await runAlibabaTranscription(jobId, token, origin, config, req);
-    } catch (error: any) {
-      job.status = 'failed';
-      job.error = error.message || '视频语音识别失败，请重试。';
-      job.updatedAt = Date.now();
-    } finally {
-      temporaryMedia.delete(token);
-      if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
-      setTimeout(() => transcriptionJobs.delete(jobId), 10 * 60 * 1000).unref();
-    }
-  })();
-});
-
-// Upload media to a private temporary file, then submit an async Alibaba Cloud Qwen ASR task.
-app.post('/api/asr/transcribe-media', async (req, res) => {
-  if (!['standard', 'parallel', 'benchmark'].includes(req.header('x-asr-mode') || 'standard')) return res.status(400).json({ error: '识别模式无效。' });
-  const maxBytes = 200 * 1024 * 1024;
-  const mimeType = String(req.header('x-media-mime-type') || '').toLowerCase().split(';')[0].trim();
-  const allowedMimeTypes = new Set([
-    'audio/aac', 'audio/flac', 'audio/mp3', 'audio/mp4', 'audio/m4a', 'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/webm',
-    'video/3gpp', 'video/avi', 'video/mov', 'video/mp4', 'video/mpeg', 'video/mpg', 'video/webm', 'video/wmv', 'video/x-flv',
-  ]);
-  if (!allowedMimeTypes.has(mimeType)) return res.status(400).json({ error: '文件格式不支持，请使用 MP3、M4A、WAV、MP4、MOV、AVI 或 WebM。' });
-  if (Number(req.header('content-length') || 0) > maxBytes) return res.status(413).json({ error: '文件超过 200 MB，请剪出需要精听的片段后重试。' });
-
-  const ownerId = (req as any).userId as number;
-  const config = getASRConfigForUser(ownerId);
-  if (!config) return res.status(403).json({ error: '请先到右上角「账号与设置 → 语音识别」配置阿里云百炼 API Key。' });
-  const origin = req.header('origin');
-  const host = req.header('host');
-  let publicOrigin = '';
-  try {
-    const parsedOrigin = new URL(origin || '');
-    if (!host || parsedOrigin.host !== host || (process.env.NODE_ENV === 'production' && parsedOrigin.protocol !== 'https:')) throw new Error();
-    publicOrigin = parsedOrigin.origin;
-  } catch {
-    return res.status(400).json({ error: '无法确认网站公开地址；请从网站页面重新上传，确保浏览器允许发送来源信息。' });
-  }
-
-  const extensionByMime: Record<string, string> = {
-    'audio/aac': '.aac', 'audio/flac': '.flac', 'audio/mp3': '.mp3', 'audio/mp4': '.m4a', 'audio/m4a': '.m4a',
-    'audio/mpeg': '.mp3', 'audio/ogg': '.ogg', 'audio/wav': '.wav', 'audio/webm': '.webm',
-    'video/3gpp': '.3gp', 'video/avi': '.avi', 'video/mov': '.mov', 'video/mp4': '.mp4', 'video/mpeg': '.mpeg',
-    'video/mpg': '.mpg', 'video/webm': '.webm', 'video/wmv': '.wmv', 'video/x-flv': '.flv',
-  };
-  const temporaryPath = path.join(tmpdir(), `ielts-asr-${randomUUID()}${extensionByMime[mimeType]}`);
-  if (activeASRUploads.has(ownerId) || [...transcriptionJobs.values()].some(job => job.ownerId === ownerId && job.status === 'processing')) return res.status(409).json({ error: '已有完整音轨正在识别，请等待完成。' });
-  if (activeASRUploads.size + [...transcriptionJobs.values()].filter(job => job.status === 'processing').length >= 2) return res.status(429).json({ error: '服务器正在处理其他音轨，请稍后再试。' });
-  activeASRUploads.add(ownerId);
-  try {
-    let receivedBytes = 0;
-    const sizeGuard = new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        receivedBytes += chunk.length;
-        callback(receivedBytes > maxBytes
-          ? Object.assign(new Error('文件超过 200 MB，请剪出需要精听的片段后重试。'), { status: 413 })
-          : null, receivedBytes > maxBytes ? undefined : chunk);
-      },
-    });
-    await pipeline(req, sizeGuard, createWriteStream(temporaryPath, { flags: 'wx' }));
-    if (!receivedBytes) throw new Error('没有收到文件内容，请重新选择文件。');
-
-    const token = randomBytes(32).toString('hex');
-    const jobId = randomUUID();
-    temporaryMedia.set(token, { path: temporaryPath, mimeType });
-    transcriptionJobs.set(jobId, { ownerId, status: 'processing', message: '正在提交百炼语音识别任务…', updatedAt: Date.now() });
-    activeASRUploads.delete(ownerId);
-    res.status(202).json({ jobId });
-
-    void runAlibabaTranscription(jobId, token, publicOrigin, config, req).catch((error: any) => {
-      console.error('Alibaba ASR task failed:', error);
-      const job = transcriptionJobs.get(jobId);
-      if (job) {
-        job.status = 'failed';
-        job.error = error?.message || '百炼语音识别失败，请检查 API Key、地域和文件格式后重试。';
-        job.updatedAt = Date.now();
-      }
-    }).finally(async () => {
-      temporaryMedia.delete(token);
-      await unlink(temporaryPath).catch(() => undefined);
-      setTimeout(() => transcriptionJobs.delete(jobId), 10 * 60 * 1000).unref();
-    });
-  } catch (error: any) {
-    activeASRUploads.delete(ownerId);
-    await unlink(temporaryPath).catch(() => undefined);
-    console.error('Error uploading media for Alibaba ASR:', error);
-    return res.status(error.status || 500).json({ error: error.message || '音视频上传失败，请重试。' });
-  }
-});
-
-app.get('/api/asr/transcribe-media/:jobId', (req, res) => {
-  const job = transcriptionJobs.get(req.params.jobId);
-  if (!job || job.ownerId !== (req as any).userId) return res.status(404).json({ error: '转写任务不存在或已过期。' });
-  res.json({ status: job.status, message: job.message, result: job.result, error: job.error });
-});
-
-async function runAlibabaTranscription(
-  jobId: string,
-  token: string,
-  publicOrigin: string,
-  config: { region: 'beijing' | 'singapore'; apiKey: string },
-  req: express.Request,
-) {
-  const job = transcriptionJobs.get(jobId)!;
-  const mode = req.header('x-asr-mode') || 'standard';
-  const totalStarted = Date.now();
-  let timingNote = '';
-  let result: ASRResult;
-  const mediaUrl = `${publicOrigin}/api/asr/media/${token}`;
-  const benchmarkStarted = Date.now();
-  let baseline: ASRResult | undefined;
-  let baselineMs = 0;
-  if (mode === 'benchmark') {
-    job.message = '耗时对比 1/2：正在整条识别完整音轨…';
-    baseline = await transcribeQwenFile(mediaUrl, config);
-    baselineMs = Date.now() - benchmarkStarted;
-  }
-  if (mode === 'parallel' || mode === 'benchmark') {
-    const source = temporaryMedia.get(token);
-    if (!source) throw new Error('音轨已过期，请重新上传。');
-    const directory = await mkdtemp(path.join(tmpdir(), 'ielts-asr-parts-'));
-    const partTokens: string[] = [];
-    const parallelStarted = Date.now();
-    try {
-      job.message = '正在切分完整音轨，稍后自动合并全部字幕…';
-      const parts = await splitAudio(source.path, directory);
-      const splitMs = Date.now() - parallelStarted;
-      job.message = `正在并行识别完整音轨：0/${parts.length} 段完成…`;
-      result = await parallelTranscribe(parts, async (part) => {
-        const partToken = randomBytes(32).toString('hex');
-        partTokens.push(partToken);
-        temporaryMedia.set(partToken, { path: part.path, mimeType: 'audio/flac' });
-        return transcribeQwenFile(`${publicOrigin}/api/asr/media/${partToken}`, config, parallelStarted + 15 * 60 * 1000);
-      }, (done, total) => {
-        job.message = `正在并行识别完整音轨：${done}/${total} 段完成…`;
-        job.updatedAt = Date.now();
-      });
-      const parallelMs = Date.now() - parallelStarted;
-      timingNote = `分段 ${parts.length} 个，最多 3 个同时识别；切分 ${(splitMs / 1000).toFixed(1)} 秒，并行流程共 ${(parallelMs / 1000).toFixed(1)} 秒。`;
-      if (baseline) {
-        const baselineWords = baseline.transcript.trim().split(/\s+/).length;
-        const parallelWords = result.transcript.trim().split(/\s+/).length;
-        timingNote = `完整音轨耗时对比：整条识别 ${(baselineMs / 1000).toFixed(1)} 秒；${timingNote}整条/并行输出词数：${baselineWords}/${parallelWords}（需人工校对切分处）。以上不含原音轨下载、上传和中文翻译。`;
-      }
-    } catch (error: any) {
-      if (!baseline) throw error;
-      result = baseline;
-      timingNote = `并行对比未完成，已保留整条识别的完整结果（${(baselineMs / 1000).toFixed(1)} 秒）。原因：${error?.code === 'ENOENT' ? '服务器缺少音频切分工具' : error?.message || '分段识别失败'}。`;
-    } finally {
-      for (const partToken of partTokens) temporaryMedia.delete(partToken);
-      await rm(directory, { recursive: true, force: true });
-    }
-  } else {
-    job.message = '百炼正在识别完整音视频…';
-    result = await transcribeQwenFile(mediaUrl, config);
-    timingNote = `英文识别耗时 ${((Date.now() - totalStarted) / 1000).toFixed(1)} 秒（不含下载、上传和中文翻译）。`;
-  }
-  const { transcript } = result;
-  let subtitles = cleanAsrSubtitleCues(result.subtitles);
-  if (!subtitles.length) throw new Error('没有识别到清晰语音。请确认音轨中有人声。');
-  const translationStarted = Date.now();
-  const processingNotes: string[] = [];
-
-  job.message = '百炼识别完成，正在智能整理字幕断句…';
-  job.updatedAt = Date.now();
-  try {
-    const llm = await getLLMClientForRequest(req);
-    try {
-      subtitles = await refineAsrSubtitles(subtitles, llm, (done, total) => {
-        job.message = `正在整理字幕断句：${done}/${total} 批…`;
-        job.updatedAt = Date.now();
-      });
-      if (!subtitles.length) throw new Error('整理后没有可用字幕。');
-    } catch (error: any) {
-      console.warn('Subtitle grouping skipped; preserving Alibaba ASR cues:', error?.message);
-      subtitles = cleanAsrSubtitleCues(result.subtitles);
-      processingNotes.push(`AI 字幕整理未完成，已保留百炼原始字幕${error?.message ? `（${error.message}）` : ''}。`);
-    }
-
-    job.message = `字幕整理完成，正在生成中文翻译（${subtitles.length} 句）…`;
-    job.updatedAt = Date.now();
-    const translationDeadline = Date.now() + 3 * 60 * 1000;
-    for (let offset = 0; offset < subtitles.length; offset += 40) {
-      if (Date.now() >= translationDeadline) break;
-      const batch = subtitles.slice(offset, offset + 40);
-      job.message = `英文已识别，正在翻译 ${offset + 1}–${offset + batch.length} / ${subtitles.length} 句…`;
-      let translationTimer: ReturnType<typeof setTimeout>;
-      const translated = await Promise.race([llm.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: `Translate each English subtitle into natural, concise Simplified Chinese. Preserve meaning and return only JSON: {"translations":["..."]}. Keep array order and return exactly ${batch.length} translations.\n${JSON.stringify(batch.map((item) => item.text))}`,
-        config: { responseMimeType: 'application/json', temperature: 0.2 },
-      }), new Promise<never>((_, reject) => {
-        translationTimer = setTimeout(() => reject(new Error('翻译等待超时，保留英文字幕。')), 60000);
-      })]).finally(() => clearTimeout(translationTimer));
-      const parsed = safeJSONParse<any>(translated.text || '{}');
-      if (Array.isArray(parsed.translations)) parsed.translations.forEach((text: any, i: number) => {
-        if (typeof text === 'string' && batch[i]) batch[i].translation = text.trim();
-      });
-    }
-  } catch (error: any) {
-    console.warn('Subtitle translation skipped:', error?.message);
-    processingNotes.push(`中文翻译未完成${error?.message ? `（${error.message}）` : ''}。`);
-  }
-  job.status = 'completed';
-  job.message = '转写完成';
-  job.result = { transcript: transcript || subtitles.map((item) => item.text).join(' '), subtitles,
-    warning: `${timingNote} 字幕整理与翻译阶段耗时 ${((Date.now() - translationStarted) / 1000).toFixed(1)} 秒。${processingNotes.join('')}${subtitles.some(item => !item.translation) && !processingNotes.some(note => note.includes('中文翻译未完成')) ? '部分中文翻译未完成，可稍后继续翻译。' : ''}` };
-  job.updatedAt = Date.now();
-}
-
-app.post('/api/gemini/transcribe-audio', async (req, res) => {
-  try {
-    let { audioData, mimeType, sampleName } = req.body;
-    
-    // If we have actual audio data, we can transcribe it using Gemini
-    if (audioData) {
-      if (!mimeType) {
-        mimeType = 'audio/mp3';
-      }
-      
-      // Clean up common non-standard mime types
-      if (mimeType.includes('x-m4a')) {
-        mimeType = 'audio/m4a';
-      } else if (mimeType.includes('audio/mpeg') || mimeType.includes('audio/mp3')) {
-        mimeType = 'audio/mp3';
-      }
-      
-      const ai = await getLLMClientForRequest(req);
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: audioData
-            }
-          },
-          {
-            text: `You are an expert IELTS Listening examiner. Your task is to transcribe this audio perfectly for student dictation.
-Please provide a high-precision transcript, segment it into a list of natural sequential sentences for dictation, and provide a natural Chinese translation for each sentence. Also extract 2-3 key vocabulary words that appear in the audio.
-
-Return your response strictly in the following JSON format without any markdown wrappers or code blocks:
-{
-  "transcript": "Full clean English transcript...",
-  "sentences": [
-    {
-      "original": "Sentence 1 English...",
-      "translation": "句子 1 的中文翻译..."
-    },
-    {
-      "original": "Sentence 2 English...",
-      "translation": "句子 2 的中文翻译..."
-    }
-  ],
-  "vocab": [
-    { "word": "word", "partOfSpeech": "n.", "chinese": "中文意思", "definition": "English definition", "example": "Original IELTS style example sentence" }
-  ]
-}`
-          }
-        ],
-        config: {
-          responseMimeType: 'application/json'
-        }
-      });
-      const parsed = safeJSONParse(response.text);
-      return res.json(parsed);
-    }
-
-    // Otherwise, handle the fallback simulated data
-    const simulatedData: Record<string, any> = {
-      "Default IELTS Listening Part 1": {
-        transcript: "Welcome to the IELTS Academic Listening practice. Today, we will discuss the implications of renewable energy sources in modern urban architecture. Many cities are struggling to implement solar panels on historical buildings due to strict visual regulations.",
-        sentences: [
-          "Welcome to the IELTS Academic Listening practice.",
-          "Today, we will discuss the implications of renewable energy sources in modern urban architecture.",
-          "Many cities are struggling to implement solar panels on historical buildings due to strict visual regulations."
-        ],
-        vocab: [
-          { word: "implication", partOfSpeech: "n.", chinese: "影响，含义", definition: "The conclusion that can be drawn from something although it is not explicitly stated.", example: "The study has major implications for future education policies." },
-          { word: "implement", partOfSpeech: "v.", chinese: "实施，执行", definition: "Put a decision, plan, or agreement into effect.", example: "The government has agreed to implement the recommendations." },
-          { word: "regulation", partOfSpeech: "n.", chinese: "条例，规定", definition: "A rule or directive made and maintained by an authority.", example: "New safety regulations have been introduced." }
-        ]
-      }
-    };
-
-    const key = sampleName || "Default IELTS Listening Part 1";
-    const result = simulatedData[key] || simulatedData["Default IELTS Listening Part 1"];
-    res.json(result);
-  } catch (error: any) {
-    console.error('Error transcribing audio:', error);
-    res.status(error.code === 'LLM_NOT_CONFIGURED' ? 403 : 500).json({ error: error.message ||'Failed to transcribe audio' });
   }
 });
 
@@ -1576,6 +1114,7 @@ async function fetchYouTubeRealSubtitles(videoId: string): Promise<any[] | null>
 
 // 链接导入（原名 crawl-video，路径保留以兼容前端；语义 = 导入链接，不编造字幕）
 app.post('/api/materials/crawl-video', async (req, res) => {
+  if (!isAdminUser((req as any).userId)) return res.status(403).json({ error: '链接导入功能仅供管理员使用。' });
   const { url } = req.body || {};
   try {
     if (!url || typeof url !== 'string' || !url.trim()) {
@@ -1917,6 +1456,7 @@ async function fetchYoutubeCaptionUrl(videoId: string): Promise<string | null> {
 
 // Extract & Translate YouTube CC Subtitles Endpoint
 app.post('/api/youtube/subtitles', async (req, res) => {
+  if (!isAdminUser((req as any).userId)) return res.status(403).json({ error: '字幕导入功能仅供管理员使用。' });
   const { url } = req.body || {};
   if (!url) {
     return res.status(400).json({ error: 'Video URL is required' });

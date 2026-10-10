@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS users (
   pass_salt  TEXT NOT NULL,
   pass_hash  TEXT NOT NULL,
   llm_json   TEXT NOT NULL DEFAULT '',
-  asr_json   TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -41,15 +40,20 @@ CREATE TABLE IF NOT EXISTS user_state (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (user_id, key)
 );
+CREATE TABLE IF NOT EXISTS shared_materials (
+  id         TEXT PRIMARY KEY,
+  payload    TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS shared_material_folders (
+  id         TEXT PRIMARY KEY,
+  payload    TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_state_user ON user_state(user_id);
+CREATE INDEX IF NOT EXISTS idx_shared_materials_updated ON shared_materials(updated_at);
 `);
-// Additive migration for existing databases created before ASR settings existed.
-const userColumns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
-if (!userColumns.some((column) => column.name === 'asr_json')) {
-  db.exec("ALTER TABLE users ADD COLUMN asr_json TEXT NOT NULL DEFAULT ''");
-}
-
 export interface UserRow {
   id: number;
   username: string;
@@ -57,7 +61,6 @@ export interface UserRow {
   pass_salt: string;
   pass_hash: string;
   llm_json: string;
-  asr_json: string;
   created_at: string;
 }
 
@@ -68,7 +71,6 @@ const stmtInsertUser = db.prepare(
   'INSERT INTO users (username, email, pass_salt, pass_hash, llm_json, created_at) VALUES (?, ?, ?, ?, ?, ?)'
 );
 const stmtSetLLM = db.prepare('UPDATE users SET llm_json = ? WHERE id = ?');
-const stmtSetASR = db.prepare('UPDATE users SET asr_json = ? WHERE id = ?');
 const stmtSessionByToken = db.prepare('SELECT * FROM sessions WHERE token = ?');
 const stmtInsertSession = db.prepare(
   'INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)'
@@ -83,6 +85,43 @@ const stmtStateAll = db.prepare('SELECT key, value FROM user_state WHERE user_id
 const stmtStateValue = db.prepare('SELECT value FROM user_state WHERE user_id = ? AND key = ?');
 const stmtStateSize = db.prepare('SELECT COALESCE(SUM(LENGTH(value)), 0) AS total FROM user_state WHERE user_id = ?');
 const stmtDeleteUserState = db.prepare('DELETE FROM user_state WHERE user_id = ?');
+const stmtSharedMaterials = db.prepare('SELECT payload FROM shared_materials ORDER BY updated_at DESC');
+const stmtSharedMaterialById = db.prepare('SELECT payload FROM shared_materials WHERE id = ?');
+const stmtUpsertSharedMaterial = db.prepare(`
+  INSERT INTO shared_materials (id, payload, updated_at) VALUES (?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
+`);
+const stmtDeleteSharedMaterial = db.prepare('DELETE FROM shared_materials WHERE id = ?');
+const stmtSharedFolders = db.prepare('SELECT payload FROM shared_material_folders ORDER BY updated_at');
+const stmtUpsertSharedFolder = db.prepare(`
+  INSERT INTO shared_material_folders (id, payload, updated_at) VALUES (?, ?, ?)
+  ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
+`);
+
+export function listSharedMaterials(): any[] {
+  return (stmtSharedMaterials.all() as { payload: string }[]).map(({ payload }) => JSON.parse(payload));
+}
+
+export function getSharedMaterial(id: string): any | undefined {
+  const row = stmtSharedMaterialById.get(id) as { payload: string } | undefined;
+  return row ? JSON.parse(row.payload) : undefined;
+}
+
+export function upsertSharedMaterial(id: string, value: unknown): void {
+  stmtUpsertSharedMaterial.run(id, JSON.stringify(value), new Date().toISOString());
+}
+
+export function deleteSharedMaterial(id: string): void {
+  stmtDeleteSharedMaterial.run(id);
+}
+
+export function listSharedMaterialFolders(): any[] {
+  return (stmtSharedFolders.all() as { payload: string }[]).map(({ payload }) => JSON.parse(payload));
+}
+
+export function upsertSharedMaterialFolder(id: string, value: unknown): void {
+  stmtUpsertSharedFolder.run(id, JSON.stringify(value), new Date().toISOString());
+}
 
 export function findUserByUsername(username: string): UserRow | undefined {
   return stmtUserByName.get(username) as unknown as UserRow | undefined;
@@ -107,10 +146,6 @@ export function insertUser(opts: {
 
 export function setUserLLMJson(id: number, llmJson: string): void {
   stmtSetLLM.run(llmJson, id);
-}
-
-export function setUserASRJson(id: number, asrJson: string): void {
-  stmtSetASR.run(asrJson, id);
 }
 
 /** 持久化会话（服务重启不掉线）。返回 token。 */

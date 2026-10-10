@@ -28,6 +28,10 @@ test('YouTube playback time highlights the matching imported cue after seeking',
       getCurrentTime() { return mediaTime; }
     } } });
     set('document', { getElementById: () => ({}) });
+    set('fetch', async (input: string) => {
+      assert.equal(input, '/api/catalog/materials');
+      return Response.json({ folders: JSON.parse(values.get('ielts_material_folders')!), materials: [material] });
+    });
     await act(async () => { tree = create(<MaterialsLibrary vocabulary={[]} onAddCustomWord={() => {}} initialMaterialId="video" />); });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 1150)); });
     assert.ok(tree.root.findAllByProps({ role: 'status' }).some((node: any) => node.children.join('').includes('字幕已连接视频时间轴')));

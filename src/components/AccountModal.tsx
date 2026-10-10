@@ -22,15 +22,12 @@ import {
 } from 'lucide-react';
 import {
   apiGetLLM,
-  apiGetASR,
   apiImport,
-  apiSaveASR,
   apiSaveLLM,
   apiSnapshot,
   apiTestLLM,
   friendlyApiError,
   LLMSummary,
-  ASRSummary,
   PublicUser,
 } from '../lib/authApi';
 import { LLM_PROVIDERS, LLMProvider, metaOf } from '../lib/llmPresets';
@@ -69,10 +66,6 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
   const [model, setModel] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [llmStatus, setLlmStatus] = useState<LLMSummary | null>(null);
-  const [asrStatus, setAsrStatus] = useState<ASRSummary | null>(null);
-  const [asrKey, setAsrKey] = useState('');
-  const [asrRegion, setAsrRegion] = useState<'beijing' | 'singapore'>('beijing');
-  const [showAsrKey, setShowAsrKey] = useState(false);
 
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -99,10 +92,6 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
         }
       })
       .catch(() => {});
-    apiGetASR().then((s) => {
-      setAsrStatus(s);
-      setAsrRegion(s.region || 'singapore');
-    }).catch(() => {});
     // 计算可导入的本地旧数据数量
     apiSnapshot()
       .then((snap) => {
@@ -158,21 +147,6 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
       setApiKey(''); // 避免回显
       flash('ok', '已保存。之后所有 AI 功能都会使用你填写的模型。');
       onUserChanged(res.user);
-    } catch (e) {
-      flash('err', friendlyApiError(e));
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const handleSaveASR = async () => {
-    setBusy('saveAsr');
-    setMsg(null);
-    try {
-      const status = await apiSaveASR({ apiKey: asrKey, region: asrRegion });
-      setAsrStatus(status);
-      setAsrKey('');
-      flash('ok', '百炼语音识别配置已保存。');
     } catch (e) {
       flash('err', friendlyApiError(e));
     } finally {
@@ -382,48 +356,6 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
             </div>
           </Section>
 
-          <Section
-            icon={asrStatus?.configured ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <Sparkles className="w-3.5 h-3.5 text-amber-500" />}
-            title={`语音识别${asrStatus?.configured ? '（百炼已配置 ✔）' : ''}`}
-          >
-            <div className="space-y-2.5">
-              <p className="text-[11px] leading-relaxed text-stone-500">
-                上传音频或视频后，使用阿里云百炼 Qwen 识别英文和时间轴；上方配置的文本大模型会检查识别内容、整理字幕断句并生成逐句中文翻译。API Key 会加密保存在账号中。
-              </p>
-              <div>
-                <label className="text-[11px] font-mono text-stone-500 block mb-1">百炼地域（API Key 需与地域匹配）</label>
-                <select className={modalInput} value={asrRegion} onChange={(e) => setAsrRegion(e.target.value as 'beijing' | 'singapore')}>
-                  <option value="singapore">新加坡（国际站）</option>
-                  <option value="beijing">北京（中国站）</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-[11px] font-mono text-stone-500 block mb-1">百炼 API Key</label>
-                <div className="relative">
-                  <input
-                    type={showAsrKey ? 'text' : 'password'}
-                    className={`${modalInput} pr-9`}
-                    placeholder={asrStatus?.configured ? '已保存（留空则沿用）' : '粘贴百炼 API Key'}
-                    value={asrKey}
-                    onChange={(e) => setAsrKey(e.target.value)}
-                    autoComplete="off"
-                  />
-                  <button type="button" onClick={() => setShowAsrKey(!showAsrKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600 cursor-pointer">
-                    {showAsrKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-              <button
-                onClick={handleSaveASR}
-                disabled={busy === 'saveAsr'}
-                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-stone-900 text-white text-xs font-medium hover:bg-stone-800 transition cursor-pointer disabled:opacity-60"
-              >
-                {busy === 'saveAsr' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                保存语音识别配置
-              </button>
-            </div>
-          </Section>
-
           {/* 3. 学习目标 */}
           <Section icon={<Target className="w-3.5 h-3.5 text-amber-500" />} title="学习目标">
             <div className="flex gap-2 items-center">
@@ -494,7 +426,7 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                 />
               </div>
               <p className="text-[10px] text-stone-400 px-1 leading-relaxed">
-                录音音频存于浏览器本地（IndexedDB），不在云端备份之列；文本材料/字幕/笔记/进度均含在备份中。
+                共享学习材料由管理员管理；此备份包含你的个人笔记、词汇和学习进度。
               </p>
             </div>
           </Section>
