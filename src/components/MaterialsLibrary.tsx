@@ -3044,7 +3044,7 @@ export default function MaterialsLibrary({
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-1.5">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="text-[10px] font-mono text-stone-500 block uppercase mb-1">材料格式</label>
                       <select
@@ -3058,27 +3058,33 @@ export default function MaterialsLibrary({
                         <option value="link">🌐 网页链接</option>
                       </select>
                     </div>
-                    <div>
-                      <label className="text-[10px] font-mono text-stone-500 block uppercase mb-1 flex items-center justify-between">
-                        <span>本地导入</span>
-                        {isParsingFile && <span className="text-amber-600 animate-pulse font-bold text-[9px]">解析中...</span>}
-                      </label>
-                      <input
-                        type="file"
-                        disabled={isParsingFile}
-                        onChange={handleLocalFileUpload}
-                        accept="audio/*,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,.pdf,.docx,.doc,.txt"
-                        className="w-full text-[10px] file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-[10px] file:font-semibold file:bg-stone-200 file:text-stone-700 hover:file:bg-stone-300 disabled:opacity-55"
-                      />
-                    </div>
+                    {newMatType === 'document' || newMatType === 'audio' ? (
+                      <div>
+                        <label className="text-[10px] font-mono text-stone-500 block uppercase mb-1 flex items-center justify-between">
+                          <span>{newMatType === 'audio' ? '选择音频文件' : '选择文档文件'}</span>
+                          {isParsingFile && <span className="text-amber-600 animate-pulse font-bold text-[9px]">解析中…</span>}
+                        </label>
+                        <input
+                          type="file"
+                          disabled={isParsingFile}
+                          onChange={handleLocalFileUpload}
+                          accept={newMatType === 'audio' ? 'audio/*' : '.pdf,.doc,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword,text/plain'}
+                          className="w-full text-[10px] file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-[10px] file:font-semibold file:bg-stone-200 file:text-stone-700 hover:file:bg-stone-300 disabled:opacity-55"
+                        />
+                      </div>
+                    ) : (
+                      <div className="self-end rounded-lg border border-stone-200 bg-white px-2.5 py-2 text-[10px] leading-relaxed text-stone-500">
+                        {newMatType === 'video' ? '视频请填写链接；本地音视频可在创建后上传识别。' : '网页材料填写链接，创建后可导入正文。'}
+                      </div>
+                    )}
                   </div>
 
                   {newMatType !== 'document' && newMatType !== 'audio' && (
                     <div className="space-y-1">
-                      <label className="text-[10px] font-mono text-stone-500 block uppercase">网页或文件URL (可选)</label>
+                      <label className="text-[10px] font-mono text-stone-500 block uppercase">{newMatType === 'video' ? '视频链接（可稍后填写）' : '网页链接（可稍后填写）'}</label>
                       <input
                         type="text"
-                        placeholder="http://example.com/audio.mp3"
+                        placeholder={newMatType === 'video' ? '粘贴 YouTube、B站或视频地址' : '粘贴要导入的网页地址'}
                         value={newMatUrl}
                         onChange={(e) => setNewMatUrl(e.target.value)}
                         className="w-full px-2 py-1.5 bg-white border rounded-lg text-xs font-sans"
@@ -3088,18 +3094,18 @@ export default function MaterialsLibrary({
 
                   <div className="space-y-1">
                     <label className="text-[10px] font-mono text-stone-500 block uppercase">
-                      {newMatType === 'audio' || newMatType === 'video' ? '英文字幕/音频文稿内容 (支持逐句听写)' : '文章/文档详细内容'}
+                      {newMatType === 'audio' || newMatType === 'video' ? '字幕或听力稿（可选）' : '正文内容（可选）'}
                     </label>
                     <textarea
-                      placeholder="在此处贴入文章正文或音频转写文字..."
-                      rows={12}
+                      placeholder={newMatType === 'video' ? '可先留空；创建后再导入字幕或上传音视频识别。' : newMatType === 'audio' ? '可选：粘贴听力稿；也可以创建后使用语音识别。' : '可直接粘贴文章正文；也可上传文档后自动提取。'}
+                      rows={7}
                       value={newMatContent}
                       onChange={(e) => setNewMatContent(e.target.value)}
-                      className="w-full p-2 bg-white border border-stone-250 rounded-lg text-xs font-sans focus:outline-hidden min-h-[200px] resize-y"
+                      className="w-full p-2 bg-white border border-stone-250 rounded-lg text-xs font-sans focus:outline-hidden min-h-[128px] resize-y"
                     />
-                    <p className="text-[9px] text-stone-400 leading-normal">
-                      💡 提示：支持直接拖拽/上传本地 <b>PDF、DOCX、TXT</b> 或音频。若 PDF/Word 属于纯图片扫描件、加密件或解析异常，您可直接将文字内容复制并粘贴到上方输入框内。
-                    </p>
+                    {(newMatType === 'document' || newMatType === 'audio') && <p className="text-[9px] text-stone-400 leading-normal">
+                      {newMatType === 'document' ? '支持 PDF、DOC、DOCX、TXT；扫描版或无法解析的文件可以直接粘贴正文。' : '选择音频文件后创建材料，再在材料页开始语音识别。'}
+                    </p>}
                   </div>
 
                   <div className="flex gap-1.5 pt-1">
@@ -3111,9 +3117,10 @@ export default function MaterialsLibrary({
                     </button>
                     <button
                       onClick={handleCreateMaterial}
-                      className="flex-1 py-1.5 bg-stone-900 text-white rounded-md text-[10px] font-bold"
+                      disabled={isParsingFile}
+                      className="flex-1 py-1.5 bg-stone-900 text-white rounded-md text-[10px] font-bold disabled:cursor-wait disabled:opacity-50"
                     >
-                      保存新增
+                      {isParsingFile ? '请等待文档解析完成…' : '保存新增'}
                     </button>
                   </div>
                 </div>
