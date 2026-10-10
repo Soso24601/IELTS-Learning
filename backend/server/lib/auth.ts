@@ -65,7 +65,7 @@ export function startSession(userId: number, res: Response): void {
   insertSession(userId, token, expiresAt);
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: process.env.COOKIE_SAME_SITE === 'none' ? 'none' : 'lax',
     secure: isSecureCookies(),
     domain: cookieDomain(),
     path: '/',
@@ -76,7 +76,7 @@ export function startSession(userId: number, res: Response): void {
 export function clearSession(res: Response): void {
   res.clearCookie(SESSION_COOKIE, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: process.env.COOKIE_SAME_SITE === 'none' ? 'none' : 'lax',
     secure: isSecureCookies(),
     domain: cookieDomain(),
     path: '/',

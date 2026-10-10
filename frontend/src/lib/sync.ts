@@ -1,5 +1,6 @@
 /** Account-scoped durable outbox. Failed writes survive reloads and account changes. */
 import { apiUploadKey } from './authApi';
+import { apiFetch } from './apiUrl';
 import { LS_PREFIX, LAST_ACCOUNT_KEY, getLastAccount, listLocalEntries } from './localData';
 
 const DEBOUNCE_MS = 1200;
@@ -114,7 +115,12 @@ export function beaconDirty(): void {
   if (!s || !Object.keys(s.pending).length) return;
   // A beacon has no acknowledgement. Keep the durable outbox until a normal upload succeeds.
   try {
-    navigator.sendBeacon('/api/data/import', new Blob([JSON.stringify({ data: s.pending })], { type: 'application/json' }));
+    void apiFetch('/api/data/import', {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: s.pending }),
+    });
   } catch { /* the outbox remains available on next login */ }
 }
 function onOnline(): void {

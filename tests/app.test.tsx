@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import React, { StrictMode } from 'react';
 import { act, create } from 'react-test-renderer';
-import App from '../src/App';
-import Flashcards from '../src/components/Flashcards';
-import Dashboard from '../src/components/Dashboard';
-import { presetVocabulary } from '../src/data/vocabulary';
-import { localDateKey } from '../src/lib/study';
+import App from '../frontend/src/App';
+import Flashcards from '../frontend/src/components/Flashcards';
+import Dashboard from '../frontend/src/components/Dashboard';
+import { presetVocabulary } from '../frontend/src/data/vocabulary';
+import { localDateKey } from '../frontend/src/lib/study';
 
 test('a starred new word is counted once when reviewed under StrictMode', async () => {
   const values = new Map<string, string>();

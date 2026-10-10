@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import React, { StrictMode, useState } from 'react';
 import { act, create } from 'react-test-renderer';
-import Flashcards from '../src/components/Flashcards';
-import { activeElapsed, localDateKey, reviewQueue } from '../src/lib/study';
-import type { IELTSWord, WordProgress } from '../src/types';
+import Flashcards from '../frontend/src/components/Flashcards';
+import { activeElapsed, localDateKey, reviewQueue } from '../frontend/src/lib/study';
+import type { IELTSWord, WordProgress } from '../frontend/src/types';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const words = ['alpha', 'beta', 'gamma'].map(id => ({ id, word: id, category: 'reading', chinese: id, definition: id, example: '', exampleTranslation: '', phonetic: '', partOfSpeech: 'n.', topic: 'test' } as IELTSWord));

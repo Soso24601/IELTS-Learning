@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { IELTSWord, AISessionHistory } from '../types';
 import { friendlyApiError } from '../lib/authApi';
+import { apiFetch } from '../lib/apiUrl';
 
 interface AIAssistantProps {
   vocabulary: IELTSWord[];
@@ -151,7 +152,7 @@ export default function AIAssistant({
     setLoadingMessage('正在调配趣味助记方案，AI 词汇导师正在脑暴中...');
 
     try {
-      const response = await fetch('/api/gemini/mnemonic', {
+      const response = await apiFetch('/api/gemini/mnemonic', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -196,7 +197,7 @@ export default function AIAssistant({
     setLoadingMessage('AI 正在生成写作练习参考，请稍候...');
 
     try {
-      const response = await fetch('/api/gemini/writing', {
+      const response = await apiFetch('/api/gemini/writing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ words: selectedWordsForWriting })
@@ -225,7 +226,7 @@ export default function AIAssistant({
     setLoadingMessage('考官正向你发出雅思口语对话邀约，录音设备准备中...');
 
     try {
-      const response = await fetch('/api/gemini/speaking', {
+      const response = await apiFetch('/api/gemini/speaking', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ word: selectedWord.word })
@@ -267,7 +268,7 @@ export default function AIAssistant({
     setLoadingMessage('AI 词汇导师正在精细剖析词伙语境...');
 
     try {
-      const response = await fetch('/api/gemini/chat', {
+      const response = await apiFetch('/api/gemini/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

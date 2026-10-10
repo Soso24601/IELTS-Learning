@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import React from 'react';
 import { act, create } from 'react-test-renderer';
-import MaterialsLibrary from '../src/components/MaterialsLibrary';
+import MaterialsLibrary from '../frontend/src/components/MaterialsLibrary';
 
 test('YouTube playback time highlights the matching imported cue after seeking', async () => {
   const old = new Map<string, PropertyDescriptor | undefined>();

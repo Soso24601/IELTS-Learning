@@ -24,6 +24,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { IELTSWord, WordProgress, WordCategory } from '../types';
+import { apiFetch } from '../lib/apiUrl';
 
 interface WordListProps {
   vocabulary: IELTSWord[];
@@ -200,7 +201,7 @@ export default function WordList({
     setAiSuccessMessage('');
 
     try {
-      const response = await fetch('/api/gemini/word-lookup', {
+      const response = await apiFetch('/api/gemini/word-lookup', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

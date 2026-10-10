@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitlesToOriginalTranscript, subtitleAtTime } from '../src/lib/subtitles';
-import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from '../server/lib/subtitleSheetGrouping';
-import { parseSubtitleSheetRows } from '../src/lib/subtitleSheet';
+import { cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitlesToOriginalTranscript, subtitleAtTime } from '../frontend/src/lib/subtitles';
+import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from '../backend/server/lib/subtitleSheetGrouping';
+import { parseSubtitleSheetRows } from '../frontend/src/lib/subtitleSheet';
 test('highlight follows media time after speed changes, seeks, and silent gaps', () => {
   const cues = [{ id: 'a', start: 1, end: 3, text: 'A' }, { id: 'b', start: 3, end: 5, text: 'B' }, { id: 'c', start: 8, end: 10, text: 'C' }];
   assert.deepEqual([0, 1, 3, 6, 9, 2, 10].map(t => subtitleAtTime(cues, t)), [null, 'a', 'b', null, 'c', 'a', null]);

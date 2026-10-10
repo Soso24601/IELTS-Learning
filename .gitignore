@@ -5,7 +5,7 @@ __pycache__/
 build/
 dist/
 coverage/
-/data/
+**/data/
 *.secret
 .DS_Store
 *.log

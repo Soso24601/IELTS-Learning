@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { apiDeleteSharedMaterial, apiGetMaterialCatalog, apiImportSharedMaterials, apiSaveSharedFolders, apiSaveSharedMaterial, apiSnapshot } from '../lib/authApi';
 import { subtitlesToOriginalTranscript } from '../lib/subtitles';
+import { apiFetch } from '../lib/apiUrl';
 
 type Caption = { id: string; start: number; end: number; text: string; translation: string };
 type Material = Record<string, any> & { id: string; name: string; url?: string; content?: string; videoSubtitles?: Caption[] };
@@ -67,7 +68,7 @@ export default function AdminMaterials() {
     setSaving(true);
     try {
       const base64 = await readFileBase64(file);
-      const response = await fetch('/api/materials/parse-subtitle-sheet', {
+      const response = await apiFetch('/api/materials/parse-subtitle-sheet', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ base64, fileName: file.name, duration: 3600 }),
       });

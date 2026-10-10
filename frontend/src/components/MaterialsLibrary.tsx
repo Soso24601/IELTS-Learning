@@ -38,6 +38,7 @@ import {
 import { subtitleAtTime } from '../lib/subtitles';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder } from '../types';
 import { apiGetMaterialCatalog } from '../lib/authApi';
+import { apiFetch } from '../lib/apiUrl';
 
 export interface TextAnnotation {
   id: string;
@@ -939,7 +940,7 @@ export default function MaterialsLibrary({
     setTranslationResult(null);
 
     try {
-      const res = await fetch('/api/gemini/translate-context', {
+      const res = await apiFetch('/api/gemini/translate-context', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -989,7 +990,7 @@ export default function MaterialsLibrary({
     });
 
     try {
-      const res = await fetch('/api/gemini/translate-context', {
+      const res = await apiFetch('/api/gemini/translate-context', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1032,7 +1033,7 @@ export default function MaterialsLibrary({
 
     setIsTranslatingByLine(true);
     try {
-      const res = await fetch('/api/gemini/translate-by-line', {
+      const res = await apiFetch('/api/gemini/translate-by-line', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: activeMaterial.content })
@@ -1311,7 +1312,7 @@ export default function MaterialsLibrary({
     setTranslationResult(null);
 
     try {
-      const res = await fetch('/api/gemini/translate-context', {
+      const res = await apiFetch('/api/gemini/translate-context', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1393,7 +1394,7 @@ export default function MaterialsLibrary({
     
     setIsSummarizing(true);
     try {
-      const res = await fetch('/api/gemini/summarize-material', {
+      const res = await apiFetch('/api/gemini/summarize-material', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2509,7 +2510,7 @@ export default function MaterialsLibrary({
                                     } else {
                                       setIsTranslatingByLine(true);
                                       try {
-                                        const res = await fetch('/api/gemini/translate-by-line', {
+                                        const res = await apiFetch('/api/gemini/translate-by-line', {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json' },
                                           body: JSON.stringify({ content: activeMaterial.content })
@@ -2560,7 +2561,7 @@ export default function MaterialsLibrary({
                                     } else {
                                       setIsTranslatingByLine(true);
                                       try {
-                                        const res = await fetch('/api/gemini/translate-by-line', {
+                                        const res = await apiFetch('/api/gemini/translate-by-line', {
                                           method: 'POST',
                                           headers: { 'Content-Type': 'application/json' },
                                           body: JSON.stringify({ content: activeMaterial.content })

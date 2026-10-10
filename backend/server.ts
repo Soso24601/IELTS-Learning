@@ -9,9 +9,9 @@ import dotenv from 'dotenv';
 import { Type } from '@google/genai';
 import { installUserSystem } from './server/lib/routes';
 import { isAdminUser } from './server/lib/auth';
+import { getLLMClientForRequest } from './server/lib/llm';
 import { assertSafeHttpUrl } from './server/lib/net';
 import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from './server/lib/subtitleSheetGrouping';
-import { createServer as createViteServer } from 'vite';
 import { createRequire } from 'module';
 import * as XLSX from 'xlsx';
 const require = createRequire(path.join(process.cwd(), 'app.js')); // 兼容 CJS 打包产物（import.meta 在 cjs 下为空）
@@ -23,6 +23,23 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+// Separate frontend/backend deployments must explicitly allow the deployed UI origin.
+const frontendOrigins = new Set((process.env.FRONTEND_ORIGIN || '').split(',').map(origin => origin.trim()).filter(Boolean));
+app.use((req, res, next) => {
+  const origin = req.get('Origin');
+  if (origin && frontendOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Vary', 'Origin');
+  }
+  if (req.method === 'OPTIONS') {
+    return origin && frontendOrigins.has(origin) ? res.sendStatus(204) : res.sendStatus(403);
+  }
+  next();
+});
 
 // Initialize express middlewares with higher limits for base64 file uploads
 app.use(express.json({ limit: '50mb' }));
@@ -1609,30 +1626,6 @@ JSON Schema 结构：
   }
 });
 
-// ----------------- VITE & STATIC SERVING -----------------
-
-async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    // Development mode
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-    console.log('Vite middleware mounted in Development mode');
-  } else {
-    // Production mode
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-    console.log('Serving static files from /dist in Production mode');
-  }
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`IELTS Vocab Backend Server running on http://0.0.0.0:${PORT}`);
-  });
-}
-
-startServer();
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`IELTS Vocab API server running on http://0.0.0.0:${PORT}`);
+});

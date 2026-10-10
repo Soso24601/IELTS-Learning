@@ -1,3 +1,5 @@
+import { apiFetch } from './apiUrl';
+
 /**
  * 前端 API 封装：所有调用同源相对路径，登录态经 httpOnly Cookie 自动携带。
  */
@@ -24,8 +26,7 @@ export class ApiError extends Error {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    credentials: 'same-origin',
+  const res = await apiFetch(path, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
   });

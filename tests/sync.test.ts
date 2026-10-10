@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, beforeEach, afterEach } from 'node:test';
-import { disableSync, enableSync, flushAll, getPendingEntries } from '../src/lib/sync';
-import { clearLocalEntries, setLastAccount, writeLocalEntries } from '../src/lib/localData';
+import { disableSync, enableSync, flushAll, getPendingEntries } from '../frontend/src/lib/sync';
+import { clearLocalEntries, setLastAccount, writeLocalEntries } from '../frontend/src/lib/localData';
 class MemoryStorage {
   data = new Map<string, string>();
   get length() { return this.data.size; }
