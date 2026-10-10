@@ -36,6 +36,7 @@ import {
   Search
 } from 'lucide-react';
 import { alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime } from '../lib/subtitles';
+import { parseSubtitleSheetRows } from '../lib/subtitleSheet';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder, MaterialType } from '../types';
 
 function subtitleRowsFromHtml(html: string): string {
@@ -65,6 +66,46 @@ function subtitleRowsFromHtml(html: string): string {
   }).join('\n');
 }
 
+
+async function parseSubtitleSpreadsheetLocally(file: File) {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', raw: false });
+  for (const sheetName of workbook.SheetNames) {
+    const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: false }) as unknown[][];
+    try {
+      return parseSubtitleSheetRows(matrix);
+    } catch {
+      // Try another sheet in case the first one is a cover or metadata sheet.
+    }
+  }
+  throw new Error('没有找到可识别的字幕工作表。请确认表格有 Time、Subtitle 列。');
+}
+
+async function requestSubtitleSpreadsheetImport(file: File, duration: number) {
+  let apiError = '服务器暂不可用';
+  try {
+    const readerResult = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = event => typeof event.target?.result === 'string' ? resolve(event.target.result) : reject(new Error('读取文件失败'));
+      reader.onerror = () => reject(new Error('读取文件失败'));
+      reader.readAsDataURL(file);
+    });
+    const response = await fetch('/api/materials/parse-subtitle-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base64: readerResult.split(',')[1], fileName: file.name, duration }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `服务器返回 ${response.status}`);
+    if (!result.success || !Array.isArray(result.subtitles) || !result.subtitles.length) throw new Error('服务器没有返回有效字幕');
+    return { subtitles: result.subtitles, sourceCueCount: result.sourceCueCount, usedLocalFallback: false };
+  } catch (error: any) {
+    apiError = error?.message || apiError;
+  }
+
+  const subtitles = await parseSubtitleSpreadsheetLocally(file);
+  return { subtitles, sourceCueCount: subtitles.length, usedLocalFallback: true, apiError };
+}
 // --- IndexedDB for persistent audio files storage ---
 const dbPromise = typeof window !== 'undefined' ? new Promise<IDBDatabase>((resolve, reject) => {
   const request = indexedDB.open('ielts_audio_db', 1);
@@ -1889,47 +1930,22 @@ export default function MaterialsLibrary({
     }
 
     setIsParsingExcel(true);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
+    void (async () => {
       try {
-        const dataUrl = event.target?.result as string;
-        if (!dataUrl) throw new Error('读取文件失败');
-        const base64 = dataUrl.split(',')[1];
-
-        const response = await fetch('/api/materials/parse-subtitle-sheet', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            base64,
-            fileName,
-            duration: maxSubtitleTime || 120
-          })
-        });
-
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error || '解析服务器返回错误');
-        }
-
-        const result = await response.json();
-        if (result.success && Array.isArray(result.subtitles)) {
-          setEditorSubtitles(result.subtitles);
-          setRawSubtitlePaste(formatSubtitlesToRawText(result.subtitles));
-          setEditorTab('visual');
-          alert(`字幕表格导入完成：读取 ${result.sourceCueCount ?? result.subtitles.length} 条有效原字幕，合并为 ${result.subtitles.length} 段。原文与时间取自表格，音乐标注已清理；请在“可视化编辑”检查后保存。`);
-        } else {
-          throw new Error('返回的字幕格式无效');
-        }
+        const result = await requestSubtitleSpreadsheetImport(file, maxSubtitleTime || 120);
+        setEditorSubtitles(result.subtitles);
+        setRawSubtitlePaste(formatSubtitlesToRawText(result.subtitles));
+        setEditorTab('visual');
+        const fallbackNote = result.usedLocalFallback ? ' 服务器接口不可用，已在浏览器本地解析。' : '';
+        alert(`字幕表格导入完成：整理出 ${result.subtitles.length} 段，时间轴取自表格，音乐标注已清理。${fallbackNote} 请在“可视化编辑”检查并保存。`);
       } catch (err: any) {
         console.error('Excel processing error:', err);
-        alert('Excel/CSV 解析或 AI 智能重构失败: ' + err.message);
+        alert('Excel/CSV 导入失败：' + err.message);
       } finally {
         setIsParsingExcel(false);
-        // Clear input value to allow uploading the same file again
         e.target.value = '';
       }
-    };
-    reader.readAsDataURL(file);
+    })();
   };
 
   // Direct active material Excel import uploader
@@ -1945,38 +1961,19 @@ export default function MaterialsLibrary({
     }
 
     setIsParsingExcel(true);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
+    void (async () => {
       try {
-        const dataUrl = event.target?.result as string;
-        if (!dataUrl) throw new Error('读取文件失败');
-        const base64 = dataUrl.split(',')[1];
-
-        const response = await fetch('/api/materials/parse-subtitle-sheet', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            base64,
-            fileName,
-            duration: maxSubtitleTime || 120
-          })
-        });
-
-        if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error || '解析服务器返回错误');
-        }
-
-        const result = await response.json();
-        if (result.success && Array.isArray(result.subtitles)) {
+        const result = await requestSubtitleSpreadsheetImport(file, maxSubtitleTime || 120);
+        const importedSubtitles = result.subtitles;
+        if (importedSubtitles.length) {
           // Save back to materials list and local storage
-          const updatedSubtitles = result.subtitles;
           const updatedMaterials = materials.map(m => {
             if (m.id === activeMaterial?.id) {
               return {
                 ...m,
-                videoSubtitles: updatedSubtitles,
-                sentences: updatedSubtitles.map((s: any) => s.text)
+                content: m.content?.trim() ? m.content : importedSubtitles.map(s => s.text).join('\n\n'),
+                videoSubtitles: importedSubtitles,
+                sentences: importedSubtitles.map(s => s.text)
               };
             }
             return m;
@@ -1984,6 +1981,8 @@ export default function MaterialsLibrary({
 
           setMaterials(updatedMaterials);
           localStorage.setItem('ielts_material_files', JSON.stringify(updatedMaterials));
+          setSpeakingReadingMode('bilingual');
+          setActiveSubtitleId(importedSubtitles[0].id);
 
           // Force state refresh so activeMaterial is updated instantly in the UI
           setTimeout(() => {
@@ -1992,19 +1991,19 @@ export default function MaterialsLibrary({
             setTimeout(() => setSelectedMaterialId(currentId), 20);
           }, 50);
 
-          alert(`字幕表格导入完成：读取 ${result.sourceCueCount ?? result.subtitles.length} 条有效原字幕，合并为 ${result.subtitles.length} 段。原文与时间取自表格，音乐标注已清理；字幕已载入当前视频。`);
+          const fallbackNote = result.usedLocalFallback ? '服务器解析接口尚不可用，已改用浏览器本地解析。' : '';
+          alert(`字幕已导入：整理为 ${importedSubtitles.length} 段，保留表格中的时间与翻译，已切换到“双语字幕”视图。${fallbackNote}`);
         } else {
-          throw new Error('返回的字幕格式无效');
+          throw new Error('材料保存失败，请重新选择当前视频后再导入。');
         }
       } catch (err: any) {
         console.error('Active material Excel processing error:', err);
-        alert('Excel/CSV 提取或 AI 智能分段失败: ' + err.message);
+        alert('Excel/CSV 导入失败：' + err.message);
       } finally {
         setIsParsingExcel(false);
         e.target.value = '';
       }
-    };
-    reader.readAsDataURL(file);
+    })();
   };
 
   // Synchronized video timeline tracker

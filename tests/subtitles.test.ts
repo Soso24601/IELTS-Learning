@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { anchorSubtitleTimes, alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime } from '../src/lib/subtitles';
 import { cleanAsrSubtitleCues, refineAsrSubtitles } from '../server/lib/subtitleRefinement';
 import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from '../server/lib/subtitleSheetGrouping';
-
+import { parseSubtitleSheetRows } from '../src/lib/subtitleSheet';
 test('highlight follows media time after speed changes, seeks, and silent gaps', () => {
   const cues = [{ id: 'a', start: 1, end: 3, text: 'A' }, { id: 'b', start: 3, end: 5, text: 'B' }, { id: 'c', start: 8, end: 10, text: 'C' }];
   assert.deepEqual([0, 1, 3, 6, 9, 2, 10].map(t => subtitleAtTime(cues, t)), [null, 'a', 'b', null, 'c', 'a', null]);
@@ -33,7 +33,7 @@ test('import normalization recovers flattened transcript table rows and drops ma
   const normalized = normalizeTranscriptForImport(pasted);
   assert.match(normalized, /^\[0-7\] It\'s 5:59 and I\'m just waiting outside the shops for it to open\. Tada!/);
   assert.match(normalized, /\[7-11\] How\'m I going to make the best baby ever under an hour and be at work on/);
-  assert.match(normalized, /\[11-14\] time\. >> Three, two, one\. Smile\./);
+  assert.match(normalized, /\[11-14\] time\. Three, two, one\. Smile\./);
   assert.doesNotMatch(normalized, /Machine Translation|\[music\]/i);
 });
 
@@ -126,4 +126,18 @@ test('spreadsheet sentence splitting reconnects phrases that cross exported cue 
   assert.ok(captions.some(text => /trifecta of dental hygiene\./.test(text)));
   assert.ok(captions.some(text => /Three, mouthwash\./.test(text)));
   assert.equal(groups.flat().length, cues.length);
+});
+
+test('browser spreadsheet fallback preserves source time and translation while cleaning music cues', () => {
+  const subtitles = parseSubtitleSheetRows([
+    ['Time', 'Subtitle', 'Machine Translation'],
+    ['0s', "It's five in the morning [music] and I'm waiting outside.", '现在是早上五点，我在外面等。'],
+    ['7s', '>> The shop is about to open.', '商店马上要开门。'],
+    ['20s', '[music]', '[音乐]'],
+  ]);
+  assert.equal(subtitles.length, 2);
+  assert.equal(subtitles[0].start, 0);
+  assert.equal(subtitles[0].text, "It's five in the morning and I'm waiting outside.");
+  assert.equal(subtitles[1].text, 'The shop is about to open.');
+  assert.equal(subtitles.map(subtitle => subtitle.translation).join(''), '现在是早上五点，我在外面等。商店马上要开门。');
 });
