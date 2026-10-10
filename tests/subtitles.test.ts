@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { anchorSubtitleTimes, alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime } from '../src/lib/subtitles';
+import { anchorSubtitleTimes, alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitlesToOriginalTranscript, subtitleAtTime } from '../src/lib/subtitles';
 import { cleanAsrSubtitleCues, refineAsrSubtitles } from '../server/lib/subtitleRefinement';
 import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from '../server/lib/subtitleSheetGrouping';
 import { parseSubtitleSheetRows } from '../src/lib/subtitleSheet';
@@ -21,6 +21,15 @@ test('AI subtitle cleanup removes music labels without merging sentence boundari
   ]);
   assert.equal(cleanMusicCue('♪ background music ♪'), '');
   assert.equal(cleanMusicCue('>> No, there is a breeze. >> Why? Like >> be careful >> Ready.'), 'No, there is a breeze. Why? Like be careful Ready.');
+});
+
+test('spreadsheet subtitles produce one clean original paragraph without translations or music cues', () => {
+  assert.equal(subtitlesToOriginalTranscript([
+    { text: 'It\'s 5:59 and I\'m waiting [music]' },
+    { text: '[upbeat music]' },
+    { text: '>> outside the shops. | 在商店外面。' },
+    { text: 'Ready.' },
+  ]), "It's 5:59 and I'm waiting outside the shops. Ready.");
 });
 
 test('import normalization removes timestamped music rows without leaking their timestamps as transcript text', () => {

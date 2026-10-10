@@ -13,6 +13,16 @@ export function cleanMusicCue(text: string): string {
   return /^(?:music|instrumental music|background music)$/i.test(cleaned) ? '' : cleaned;
 }
 
+/** Build one untranslated paragraph from caption rows, excluding translations and music cues. */
+export function subtitlesToOriginalTranscript(subtitles: Array<Pick<TimedSubtitle, 'text'>>): string {
+  return subtitles
+    .map(subtitle => cleanMusicCue(subtitle.text.split(/\s+\|\s+/)[0] || ''))
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** Clean model output while preserving the AI's sentence boundaries and timings. */
 export function cleanAlignedSubtitles(subtitles: TimedSubtitle[]): TimedSubtitle[] {
   return subtitles.flatMap(subtitle => {

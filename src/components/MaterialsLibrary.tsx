@@ -35,7 +35,7 @@ import {
   EyeOff,
   Search
 } from 'lucide-react';
-import { alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime } from '../lib/subtitles';
+import { alignSubtitleBatches, cleanAlignedSubtitles, cleanMusicCue, normalizeTranscriptForImport, subtitleAtTime, subtitlesToOriginalTranscript } from '../lib/subtitles';
 import { parseSubtitleSheetRows } from '../lib/subtitleSheet';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder, MaterialType } from '../types';
 
@@ -365,6 +365,7 @@ export default function MaterialsLibrary({
   const [ccVideoUrl, setCcVideoUrl] = useState('');
   const [isParsingExcel, setIsParsingExcel] = useState(false);
   const mediaFileInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceAudioFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Material rename modal state
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
@@ -1684,6 +1685,7 @@ export default function MaterialsLibrary({
       if (m.id === activeMaterial.id) {
         return {
           ...m,
+          content: subtitlesToOriginalTranscript(sortedSubtitles),
           videoSubtitles: sortedSubtitles,
           sentences: sortedSubtitles.map(s => s.text) // sync sentences for dictation too
         };
@@ -1971,7 +1973,7 @@ export default function MaterialsLibrary({
             if (m.id === activeMaterial?.id) {
               return {
                 ...m,
-                content: m.content?.trim() ? m.content : importedSubtitles.map(s => s.text).join('\n\n'),
+                content: subtitlesToOriginalTranscript(importedSubtitles),
                 videoSubtitles: importedSubtitles,
                 sentences: importedSubtitles.map(s => s.text)
               };
@@ -1992,7 +1994,7 @@ export default function MaterialsLibrary({
           }, 50);
 
           const fallbackNote = result.usedLocalFallback ? '服务器解析接口尚不可用，已改用浏览器本地解析。' : '';
-          alert(`字幕已导入：整理为 ${importedSubtitles.length} 段，保留表格中的时间与翻译，已切换到“双语字幕”视图。${fallbackNote}`);
+          alert(`字幕已导入：整理为 ${importedSubtitles.length} 段；保留时间轴和双语字幕，并生成了去除翻译与音乐标注的完整英文原文。${fallbackNote}`);
         } else {
           throw new Error('材料保存失败，请重新选择当前视频后再导入。');
         }
@@ -2238,10 +2240,15 @@ export default function MaterialsLibrary({
       alert('请输入材料名称！');
       return;
     }
+    if (newMatType === 'audio' && newMatUrl.startsWith('blob:') && !tempAudioBase64) {
+      alert('音频文件仍在读取或读取失败，请等待读取完成后再保存，或重新选择音频文件。');
+      return;
+    }
     
     // Auto generate sentences if audio
     let sentences: string[] = [];
-    if (newMatType === 'audio' && newMatContent) {
+    const audioTranscriptPlaceholder = /^正在加载本地音频|录入后可点击一键AI智能转写/i.test(newMatContent.trim());
+    if (newMatType === 'audio' && newMatContent && !audioTranscriptPlaceholder) {
       sentences = newMatContent
         .split(/(?<=[.!?])\s+/)
         .filter(s => s.trim().length > 3);
@@ -2310,19 +2317,26 @@ export default function MaterialsLibrary({
     
     if (file.type.startsWith('audio/')) {
       setNewMatType('audio');
+      setIsParsingFile(true);
       // Create local object URL for preview audio
       const objUrl = URL.createObjectURL(file);
       setNewMatUrl(objUrl);
       
       const reader = new FileReader();
       reader.onload = async (event) => {
-        setNewMatContent('正在加载本地音频... 录入后可点击一键AI智能转写并输出逐字听写文本。');
+        // Do not put a loading hint in material.content: the UI treats content as an existing transcript.
+        setNewMatContent('');
         const dataUrl = event.target?.result as string;
         if (dataUrl) {
           const base64 = dataUrl.split(',')[1];
           setTempAudioBase64(base64);
           setTempAudioMimeType(file.type);
         }
+        setIsParsingFile(false);
+      };
+      reader.onerror = () => {
+        setIsParsingFile(false);
+        alert('读取音频失败，请重新选择该文件。');
       };
       reader.readAsDataURL(file);
     } else {
@@ -2414,13 +2428,50 @@ export default function MaterialsLibrary({
   };
 
   // 6. AI Call - Transcribe Audio for Listening
-  const handleAITranscribe = async () => {
+  const handleAITranscribe = async (replacementFile?: File) => {
     if (!activeMaterial || isSummarizing || isTranscribingMedia) return;
     setIsSummarizing(true);
     try {
+      const saveAndTranscribeFile = async (file: File) => {
+        if (file.size > 200 * 1024 * 1024) throw new Error('音频超过 200 MB 上传上限，请压缩或剪短后重试。');
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = event => typeof event.target?.result === 'string' ? resolve(event.target.result) : reject(new Error('读取音频失败，请重新选择文件。'));
+          reader.onerror = () => reject(new Error('读取音频失败，请重新选择文件。'));
+          reader.readAsDataURL(file);
+        });
+        const extension = file.name.split('.').pop()?.toLowerCase() || '';
+        const mimeType = file.type || ({ mp3: 'audio/mpeg', m4a: 'audio/mp4', wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac', aac: 'audio/aac' } as Record<string, string>)[extension] || 'audio/mpeg';
+        await saveAudio(activeMaterial.id, dataUrl.split(',')[1], mimeType);
+        setActiveAudioUrl(URL.createObjectURL(new Blob([file], { type: mimeType })));
+        setIsSummarizing(false);
+        await handleTranscribeMediaFile(file, activeMaterial.id);
+      };
+
+      if (replacementFile) {
+        await saveAndTranscribeFile(replacementFile);
+        return;
+      }
+
       const audioRecord = await getAudio(activeMaterial.id);
       if (!audioRecord) {
-        throw new Error('未在本地浏览器数据库中找到对应的音频。此音频可能是升级前上传或本地缓存已被清除，请删除该材料重新导入音频后再试。');
+        // A blob URL can be recovered only while the page that created it is still open.
+        // This salvages uploads saved before their IndexedDB write completed.
+        if (activeMaterial.url?.startsWith('blob:')) {
+          try {
+            const response = await fetch(activeMaterial.url);
+            if (response.ok) {
+              const blob = await response.blob();
+              const mimeType = blob.type || 'audio/mpeg';
+              const extension = mimeType.includes('wav') ? 'wav' : mimeType.includes('mp4') ? 'm4a' : mimeType.includes('ogg') ? 'ogg' : mimeType.includes('flac') ? 'flac' : 'mp3';
+              await saveAndTranscribeFile(new File([blob], `${activeMaterial.name}.${extension}`, { type: mimeType }));
+              return;
+            }
+          } catch (error) {
+            console.warn('Could not recover audio from the current blob URL:', error);
+          }
+        }
+        throw new Error('浏览器本地音频缓存已丢失。请点下方“重新选择音频并识别”，可保留当前材料和笔记，无需删除材料。');
       }
       if (!audioRecord.base64) throw new Error('本地音频内容为空，请重新上传音频后重试。');
       const estimatedBytes = Math.floor(audioRecord.base64.length * 3 / 4);
@@ -3061,7 +3112,7 @@ export default function MaterialsLibrary({
                       <div>
                         <label className="text-[10px] font-mono text-stone-500 block uppercase mb-1 flex items-center justify-between">
                           <span>{newMatType === 'audio' ? '选择音频文件' : '选择文档文件'}</span>
-                          {isParsingFile && <span className="text-amber-600 animate-pulse font-bold text-[9px]">解析中…</span>}
+                          {isParsingFile && <span className="text-amber-600 animate-pulse font-bold text-[9px]">{newMatType === 'audio' ? '读取音频中…' : '解析中…'}</span>}
                         </label>
                         <input
                           type="file"
@@ -3103,7 +3154,7 @@ export default function MaterialsLibrary({
                       className="w-full p-2 bg-white border border-stone-250 rounded-lg text-xs font-sans focus:outline-hidden min-h-[128px] resize-y"
                     />
                     {(newMatType === 'document' || newMatType === 'audio') && <p className="text-[9px] text-stone-400 leading-normal">
-                      {newMatType === 'document' ? '支持 PDF、DOC、DOCX、TXT；扫描版或无法解析的文件可以直接粘贴正文。' : '选择音频文件后创建材料，再在材料页开始语音识别。'}
+                      {newMatType === 'document' ? '支持 PDF、DOC、DOCX、TXT；扫描版或无法解析的文件可以直接粘贴正文。' : '音频保存在当前浏览器本机，不会同步到其他设备；选好文件并等待读取完成后创建材料，再开始识别。若本地缓存丢失，可在材料页重新选择音频，无需删除材料。'}
                     </p>}
                   </div>
 
@@ -3119,7 +3170,7 @@ export default function MaterialsLibrary({
                       disabled={isParsingFile}
                       className="flex-1 py-1.5 bg-stone-900 text-white rounded-md text-[10px] font-bold disabled:cursor-wait disabled:opacity-50"
                     >
-                      {isParsingFile ? '请等待文档解析完成…' : '保存新增'}
+                      {isParsingFile ? (newMatType === 'audio' ? '请等待音频读取完成…' : '请等待文档解析完成…') : '保存新增'}
                     </button>
                   </div>
                 </div>
@@ -3685,30 +3736,6 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                               </span>
                               
                               <div className="flex items-center gap-2 flex-wrap">
-                                {/* Mode Selector Toggle */}
-                                <div className="flex bg-stone-100 p-0.5 rounded-lg border border-stone-200 shrink-0">
-                                  <button
-                                    onClick={() => setSpeakingReadingMode('bilingual')}
-                                    className={`px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1 cursor-pointer text-[10px] ${
-                                      speakingReadingMode === 'bilingual'
-                                        ? 'bg-white text-stone-950 shadow-xs' 
-                                        : 'text-stone-500 hover:text-stone-850'
-                                    }`}
-                                  >
-                                    📖 双语字幕
-                                  </button>
-                                  <button
-                                    onClick={() => setSpeakingReadingMode('continuous')}
-                                    className={`px-2.5 py-1 rounded-md font-bold transition flex items-center gap-1 cursor-pointer text-[10px] ${
-                                      speakingReadingMode === 'continuous'
-                                        ? 'bg-white text-stone-950 shadow-xs' 
-                                        : 'text-stone-500 hover:text-stone-850'
-                                    }`}
-                                  >
-                                    📄 整段原文(不翻译)
-                                  </button>
-                                </div>
-
                                 {/* Auto-Sync Toggle Button (Only in bilingual mode) */}
                                 {speakingReadingMode === 'bilingual' && (
                                   <button
@@ -3912,6 +3939,13 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                               )}
                             </div>
                           </div>
+
+                          {speakingReadingMode === 'bilingual' && activeMaterial.content?.trim() && (
+                            <details open className="mt-3 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
+                              <summary className="cursor-pointer text-xs font-bold text-stone-700">📄 完整英文原文（已去除翻译和音乐标注）</summary>
+                              <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-stone-800">{activeMaterial.content}</p>
+                            </details>
+                          )}
 
                         </div>
                       )}
@@ -4174,7 +4208,10 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                 👁️ 显示听写文本
                               </button>
                             </div>
-                          ) : activeMaterial.type === 'audio' && (!activeMaterial.sentences || activeMaterial.sentences.length === 0) ? (
+                          ) : activeMaterial.type === 'audio' && (
+                            !activeMaterial.sentences?.length ||
+                            /^正在加载本地音频|录入后可点击一键AI智能转写/i.test((activeMaterial.content || '').trim())
+                          ) ? (
                             <div className="flex flex-col items-center justify-center py-16 px-6 bg-amber-50/20 border border-dashed border-amber-200 rounded-2xl text-center space-y-4 w-full">
                               <div className="p-3.5 bg-amber-50 rounded-full text-amber-600">
                                 <Sparkles className="h-5 w-5 animate-bounce" />
@@ -4191,6 +4228,25 @@ Welcome to the library! Today, we are focusing on low-lying coastal urban areas 
                                 className="py-2.5 px-5 bg-amber-400 hover:bg-amber-300 disabled:bg-stone-100 disabled:text-stone-400 text-stone-950 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition cursor-pointer"
                               >
                                 {isSummarizing || isTranscribingMedia ? transcribingMediaMessage : '🎧 使用百炼识别音频并生成逐句听写'}
+                              </button>
+                              <input
+                                ref={replaceAudioFileInputRef}
+                                type="file"
+                                accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac"
+                                className="hidden"
+                                onChange={event => {
+                                  const file = event.target.files?.[0];
+                                  if (file) void handleAITranscribe(file);
+                                  event.target.value = '';
+                                }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => replaceAudioFileInputRef.current?.click()}
+                                disabled={isSummarizing || isTranscribingMedia}
+                                className="text-[10px] text-stone-500 underline underline-offset-2 hover:text-stone-800 disabled:opacity-50"
+                              >
+                                音频缓存丢失或想更换文件？重新选择并识别（保留材料）
                               </button>
                             </div>
                           ) : activeMaterial.content ? (
