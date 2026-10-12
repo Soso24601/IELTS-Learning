@@ -12,7 +12,6 @@ import {
   Sparkles, 
   Menu, 
   X,
-  FileText,
   Bookmark,
   TrendingUp,
   Settings,
@@ -33,7 +32,6 @@ import Flashcards from './components/Flashcards';
 import QuizEngine from './components/QuizEngine';
 import AIAssistant from './components/AIAssistant';
 import AccountModal from './components/AccountModal';
-import AdminMaterials from './components/AdminMaterials';
 
 interface AppProps {
   user: PublicUser;
@@ -552,7 +550,6 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
                 { id: 'flashcards', label: '记忆闪卡', icon: Bookmark },
                 { id: 'quizzes', label: '多维自测', icon: Award },
                 { id: 'ai-coach', label: 'AI 辅导中心', icon: Sparkles },
-                ...(user.isAdmin ? [{ id: 'admin-materials', label: '材料管理', icon: FileText }] : [])
               ].map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -618,7 +615,6 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
             { id: 'flashcards', label: '记忆闪卡', icon: Bookmark },
             { id: 'quizzes', label: '多维自测', icon: Award },
             { id: 'ai-coach', label: 'AI 辅导中心', icon: Sparkles },
-            ...(user.isAdmin ? [{ id: 'admin-materials', label: '材料管理', icon: FileText }] : [])
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -703,8 +699,6 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
             onClearInitialWord={() => setTracedWord(null)}
           />
         )}
-
-        {activeTab === 'admin-materials' && user.isAdmin && <AdminMaterials />}
 
         {activeTab === 'flashcards' && (
           <Flashcards 

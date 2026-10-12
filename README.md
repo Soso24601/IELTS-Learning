@@ -49,15 +49,15 @@ npm run dev:frontend
 - **Root Directory：** `frontend`
 - 使用 Vite 静态站点构建，输出目录为 `dist`
 - 设置 `VITE_API_BASE_URL=https://api.ielts.grincaq.info`
-- 绑定网站域名 `ielts.grincaq.info`
+- 绑定学习者域名 `ielts.grincaq.info`；管理员工作台通过独立页面 `/admin.html` 访问
 
 ### 后端环境变量
 
 | 变量 | 用途 |
 |---|---|
 | `APP_SECRET` | 加密用户模型 API Key 的密钥；生产环境设置随机长密钥 |
-| `ADMIN_USERNAME` | 现有管理员账号用户名 |
-| `FRONTEND_ORIGIN` | 前端完整来源，例 `https://ielts.grincaq.info`，不带末尾斜杠 |
+| `ADMIN_USERNAME` | 具有材料管理权限的账号用户名；必须先在学习者网站注册同名账号 |
+| `FRONTEND_ORIGIN` | 学习者网站完整来源，例如 `https://ielts.grincaq.info`，不带末尾斜杠 |
 | `COOKIE_SAME_SITE` | 跨域前后端设为 `none` |
 | `COOKIE_SECURE` | HTTPS 生产设为 `true` |
 | `PUBLIC_SIGNUP` | 是否开放注册，默认 `true` |
@@ -67,17 +67,16 @@ npm run dev:frontend
 
 ### 推荐上线顺序
 
-1. **保留现在运行中的单体服务**，先备份其中 `DATA_DIR/app.db`。新后端若没有导入这个数据库，会表现为没有旧账号和材料。
-2. 在不接管正式域名的情况下先部署 API 服务，配置数据库持久化，并把备份的 `app.db` 放到新后端的 `DATA_DIR`。
-3. 确认 `https://api.ielts.grincaq.info/api/health` 正常，再设置 `FRONTEND_ORIGIN`、Cookie 变量和前端 `VITE_API_BASE_URL`。
-4. 用 Zeabur 临时域名部署并测试前端，检查注册/登录、材料目录、字幕和词汇查询。
-5. 所有功能通过后，才将正式网站域名从旧服务切换到前端服务；旧服务先保留作回滚点。
+1. 后端 Volume 挂载到 `/app/data`，并设置 `DATA_DIR=/app/data`；同时设置 `ADMIN_USERNAME` 和 `FRONTEND_ORIGIN`。
+2. 确认 `https://api.ielts.grincaq.info/api/health` 正常，再部署前端静态服务。
+3. 将 `ielts.grincaq.info` 绑定到前端静态服务，并设置 API 地址。
+4. 在学习者网站注册管理员用户名，然后访问 `https://ielts.grincaq.info/admin.html` 登录工作台；验证材料发布后能出现在学习者材料目录。
 
 ## 管理学习材料
 
-1. 后端设置 `ADMIN_USERNAME` 为现有账号用户名。
-2. 管理员登录前端，在「材料管理」中填写视频链接并导入字幕/文稿。
-3. 发布后，学习者前端只读取共享目录，不再从自己的设备上传学习材料。
+1. 在后端设置 `ADMIN_USERNAME` 为管理员用户名，并开放注册以创建该账号。
+2. 管理员先在学习者网站注册对应用户名，再访问 `https://ielts.grincaq.info/admin.html` 登录材料工作台。
+3. 管理员在工作台填写视频链接并导入字幕/文稿；学习者网站只读取已发布内容，不提供上传入口。
 
 视频链接可以是 YouTube 等平台的嵌入链接；视频仍由原平台播放，字幕由后端材料目录提供。较大的视频文件建议放对象存储或视频平台，不要写入 SQLite。
 
