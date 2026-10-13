@@ -26,6 +26,7 @@ test('admin preview blocks bad rows and failed publishes keep the draft for retr
     const change = async (node: any, value: string) => act(async () => node.props.onChange({ target: { value } }));
     const submit = async () => act(async () => tree.root.findByType('form').props.onSubmit({ preventDefault() {} }));
     await change(tree.root.findByProps({ placeholder: '例如：Nanotechnology and Its Applications' }), 'Lesson');
+    await change(tree.root.findByType('select'), 'document');
     await change(tree.root.findAllByType('textarea')[0], '[0-2] Hello.\nbad row');
     await submit();
     await submit();

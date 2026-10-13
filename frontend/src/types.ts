@@ -28,6 +28,9 @@ export interface IELTSWord {
 export type MaterialType = 'audio' | 'document' | 'video' | 'link';
 
 export interface StudyMaterial {
+  tags?: string[];
+  duration?: number;
+  isPublished?: boolean;
   transcriptionReport?: string;
   id: string;
   name: string;

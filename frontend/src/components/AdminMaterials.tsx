@@ -1,23 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { apiDeleteSharedMaterial, apiGetAdminMaterials, apiImportSharedMaterials, apiSaveSharedFolders, apiSaveSharedMaterial, apiSnapshot } from '../lib/authApi';
+import { apiDeleteSharedMaterial, apiGetAdminMaterials, apiImportSharedMaterials, apiSaveSharedMaterial, apiSnapshot } from '../lib/authApi';
 import { subtitlesToOriginalTranscript } from '../lib/subtitles';
+import { catalogType, CatalogType, MATERIAL_TYPES, materialTags } from '../lib/materialCatalog';
+import { apiUrl } from '../lib/apiUrl';
 import { apiFetch } from '../lib/apiUrl';
-import { inspectCaptionDraft, inspectVideoLink, subtitleFileToDraft } from '../lib/materialDraft';
+import { inspectAudioLink, inspectCaptionDraft, inspectVideoLink, subtitleFileToDraft } from '../lib/materialDraft';
 
 type Caption = { id: string; start: number; end: number; text: string; translation?: string };
 type Material = Record<string, any> & { id: string; name: string; url?: string; content?: string; videoSubtitles?: Caption[] };
 
-const CATEGORIES = [
-  { id: 'reading', label: '阅读' }, { id: 'writing', label: '写作' },
-  { id: 'speaking', label: '口语' }, { id: 'listening', label: '听力' },
-];
-const FOLDERS = CATEGORIES.map(category => ({ id: `shared-${category.id}`, name: category.label, category: category.id, createdAt: '2026-01-01T00:00:00.000Z' }));
-
 function readFileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = event => typeof event.target?.result === 'string' ? resolve(event.target.result.split(',')[1] || '') : reject(new Error('读取字幕文件失败'));
-    reader.onerror = () => reject(new Error('读取字幕文件失败'));
+    reader.onload = event => typeof event.target?.result === 'string' ? resolve(event.target.result.split(',')[1] || '') : reject(new Error('读取文件失败'));
+    reader.onerror = () => reject(new Error('读取文件失败'));
     reader.readAsDataURL(file);
   });
 }
@@ -32,7 +28,9 @@ export default function AdminMaterials() {
   const [editingPublished, setEditingPublished] = useState(true);
   const [editingId, setEditingId] = useState('');
   const [name, setName] = useState('');
-  const [category, setCategory] = useState('listening');
+  const [type, setType] = useState<CatalogType>('video');
+  const [tags, setTags] = useState('');
+  const [duration, setDuration] = useState('');
   const [url, setUrl] = useState('');
   const [content, setContent] = useState('');
   const [captionText, setCaptionText] = useState('');
@@ -43,8 +41,9 @@ export default function AdminMaterials() {
   const video = inspectVideoLink(url);
   const draftCaptions = inspection.captions;
   const original = content.trim() || subtitlesToOriginalTranscript(draftCaptions);
-  const issues = [...inspection.errors, ...(video.error ? [video.error] : []), ...(mediaError ? [mediaError] : [])];
-  const valid = Boolean(name.trim() && (url.trim() || original || draftCaptions.length) && !issues.length);
+  const sourceError = type === 'audio' ? inspectAudioLink(url) : video.error;
+  const issues = [...inspection.errors, ...(sourceError ? [sourceError] : []), ...(mediaError ? [mediaError] : []), ...(duration && (!Number.isFinite(Number(duration)) || Number(duration) <= 0) ? ['媒体时长需要为正数'] : [])];
+  const valid = Boolean(name.trim() && (type === 'document' ? original : url.trim()) && !issues.length);
 
   const load = async () => {
     setLoading(true);
@@ -58,7 +57,22 @@ export default function AdminMaterials() {
   useEffect(() => { void load(); }, []);
 
   const resetForm = () => {
-    setEditingPublished(true); setEditingId(''); setName(''); setCategory('listening'); setUrl(''); setContent(''); setCaptionText(''); setPreviewing(false); setMediaError('');
+    setEditingPublished(true); setEditingId(''); setName(''); setType('video'); setTags(''); setDuration(''); setUrl(''); setContent(''); setCaptionText(''); setPreviewing(false); setMediaError('');
+  };
+
+  const handleMediaFile = async (file?: File) => {
+    if (!file) return;
+    if (file.size > 30 * 1024 * 1024) { setNotice('媒体文件不能超过 30 MB；较大的视频请使用公开播放链接。'); return; }
+    setSaving(true); setMediaError('');
+    try {
+      const base64 = await readFileBase64(file);
+      const response = await apiFetch('/api/admin/materials/media', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ base64, fileName: file.name, type }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '媒体上传失败');
+      setUrl(result.url); setDuration(''); setPreviewing(true);
+      setNotice(`「${file.name}」已上传。请添加原文或字幕并预览，确认后再发布。`);
+    } catch (error: any) { setNotice(error.message || '媒体上传失败'); }
+    finally { setSaving(false); }
   };
 
   const handleCaptionFile = async (file?: File) => {
@@ -98,15 +112,15 @@ export default function AdminMaterials() {
     const parsedCaptions = draftCaptions;
     const material: Material = {
       id: editingId || `shared-${crypto.randomUUID()}`,
-      name: name.trim(), isPublished: editingPublished, type: url.trim() ? 'video' : 'document', category,
-      folderId: `shared-${category}`, url: url.trim() || undefined,
+      name: name.trim(), isPublished: editingPublished, type, category: type === 'document' ? 'reading' : 'listening',
+      tags: materialTags(tags), duration: Number(duration) || undefined,
+      folderId: `shared-${type}`, url: url.trim() || undefined,
       content: original, notes: '', timestamp: new Date().toISOString(),
       sentences: original ? original.split(/(?<=[.!?])\s+/).filter(Boolean) : [],
       videoSubtitles: parsedCaptions,
     };
     setSaving(true);
     try {
-      await apiSaveSharedFolders(FOLDERS);
       await apiSaveSharedMaterial(material);
       resetForm();
       await load();
@@ -117,7 +131,7 @@ export default function AdminMaterials() {
 
   const handleEdit = (material: Material) => {
     setEditingPublished(material.isPublished !== false);
-    setEditingId(material.id); setName(material.name); setCategory(material.category || 'listening');
+    setEditingId(material.id); setName(material.name); setType(catalogType(material)); setTags((material.tags || []).join('，')); setDuration(material.duration ? String(material.duration) : '');
     setUrl(material.url || ''); setContent(material.content === subtitlesToOriginalTranscript(material.videoSubtitles || []) ? '' : material.content || '');
     setCaptionText((material.videoSubtitles || []).map(caption => `[${caption.start}-${caption.end}] ${caption.text}${caption.translation ? ` | ${caption.translation}` : ''}`).join('\n'));
     setPreviewing(false); setMediaError('');
@@ -171,13 +185,7 @@ export default function AdminMaterials() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-        <p className="text-xs font-mono uppercase tracking-widest text-amber-700">管理员工作台</p>
-        <h1 className="mt-1 text-2xl font-serif font-bold text-stone-900">共享学习材料管理</h1>
-        <p className="mt-2 text-sm leading-relaxed text-stone-600">在这里发布视频链接、英文原文和双语字幕。普通学习页面只读取已发布内容，不再提供材料上传或语音转写。</p>
-        </div><div className="rounded-xl border border-stone-300 bg-white px-5 py-3 text-sm"><strong className="text-2xl font-serif">{materials.filter(material => material.isPublished !== false).length}</strong><span className="ml-2 text-stone-500">份已发布材料</span></div>
-      </header>
+      <div className="flex items-center justify-between rounded-xl border border-stone-300 bg-white px-5 py-3 text-sm"><span className="text-stone-600">材料目录 · 共 {materials.length} 份</span><span><strong className="font-serif text-xl">{materials.filter(material => material.isPublished !== false).length}</strong><span className="ml-2 text-stone-500">份已发布</span></span></div>
 
       {notice && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{notice}</p>}
       <form onSubmit={handleSave} className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
@@ -188,15 +196,23 @@ export default function AdminMaterials() {
           <label className="space-y-1 text-xs font-semibold text-stone-600">材料标题
             <input value={name} onChange={event => setName(event.target.value)} className="w-full rounded-lg border border-stone-300 p-2 text-sm" placeholder="例如：Nanotechnology and Its Applications" />
           </label>
-          <label className="space-y-1 text-xs font-semibold text-stone-600">学习分类
-            <select value={category} onChange={event => setCategory(event.target.value)} className="w-full rounded-lg border border-stone-300 p-2 text-sm">
-              {CATEGORIES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+          <label className="space-y-1 text-xs font-semibold text-stone-600">材料类型
+            <select value={type} onChange={event => { setType(event.target.value as CatalogType); setMediaError(''); setPreviewing(false); }} className="w-full rounded-lg border border-stone-300 p-2 text-sm">
+              {MATERIAL_TYPES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </label>
         </div>
-        <label className="block space-y-1 text-xs font-semibold text-stone-600">视频链接（可留空，支持 YouTube 等可嵌入链接）
-          <input value={url} onChange={event => { setUrl(event.target.value); setMediaError(''); }} className="w-full rounded-lg border border-stone-300 p-2 text-sm" placeholder="https://www.youtube.com/watch?v=..." />
+        <label className="block space-y-1 text-xs font-semibold text-stone-600">{type === 'video' ? '视频链接（支持 YouTube 或公开视频文件）' : type === 'audio' ? '音频链接（公开的音频文件地址）' : '文章来源链接（可留空）'}
+          <input value={url} onChange={event => { setUrl(event.target.value); setMediaError(''); }} className="w-full rounded-lg border border-stone-300 p-2 text-sm" placeholder={type === "audio" ? "https://example.com/audio.mp3" : "https://..."} />
         </label>
+        {type !== 'document' && <label className="block space-y-1 text-xs font-semibold text-stone-600">或上传{type === 'audio' ? '音频' : '视频'}文件
+          <input type="file" accept={type === 'audio' ? '.mp3,.wav,.m4a,.ogg' : '.mp4,.webm'} onChange={event => { void handleMediaFile(event.target.files?.[0]); event.target.value = ''; }} className="block w-full rounded-lg border border-stone-300 p-2 text-xs" />
+          <span className="block font-normal text-stone-500">最多 30 MB，保存到服务器持久化硬盘。上传后仍需确认发布。</span>
+        </label>}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-semibold text-stone-600">主题标签<input value={tags} onChange={event => setTags(event.target.value)} placeholder="日常生活，科技，校园" className="mt-1 w-full rounded-lg border border-stone-300 p-2 text-sm" /></label>
+          {type !== 'document' && <label className="text-xs font-semibold text-stone-600">媒体时长（秒，可留空）<input type="number" min="0.1" step="any" value={duration} onChange={event => setDuration(event.target.value)} className="mt-1 w-full rounded-lg border border-stone-300 p-2 text-sm" /></label>}
+        </div>
         <label className="block space-y-1 text-xs font-semibold text-stone-600">字幕文件
           <input type="file" accept=".xlsx,.xls,.csv,.srt,.vtt" disabled={saving} onChange={event => { void handleCaptionFile(event.target.files?.[0]); event.target.value = ''; }} className="block w-full rounded-lg border border-stone-300 p-2 text-xs" />
           <span className="block font-normal text-stone-400">支持带 Time、Subtitle 列的 Excel/CSV，以及 SRT、VTT。字幕和翻译会导入服务器，并保留时间轴。</span>
@@ -216,11 +232,12 @@ export default function AdminMaterials() {
         {previewing && <section className="space-y-4 rounded-xl border border-stone-300 bg-stone-50 p-4" aria-label="材料发布预览">
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-serif text-lg font-bold">发布预览 · {name || '未填写标题'}</h3><span className="text-xs text-stone-500">{draftCaptions.length} 段字幕 · {original.split(/\s+/).filter(Boolean).length} 个词</span></div>
           {!name.trim() && <p className="text-sm text-rose-700">请填写材料标题。</p>}
-          {!url.trim() && !original && !draftCaptions.length && <p className="text-sm text-rose-700">请添加视频链接、字幕或英文原文。</p>}
+          {!(type === 'document' ? original : url.trim()) && <p className="text-sm text-rose-700">{type === 'document' ? '请填写文章原文。' : '请添加媒体链接或上传媒体文件。'}</p>}
           {!!issues.length && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700"><p className="font-semibold">以下问题需要修正：</p><ul className="mt-2 list-inside list-disc">{issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul></div>}
           {inspection.removed > 0 && <p className="text-xs text-stone-500">已自动移除 {inspection.removed} 段音乐标注。</p>}
-          {video.preview && (video.direct ? <video key={video.preview} controls src={video.preview} onError={() => setMediaError('视频无法加载，请检查链接是否公开可访问。')} className="aspect-video w-full rounded-lg bg-stone-900" /> : <iframe title="视频发布预览" src={video.preview} className="aspect-video w-full rounded-lg" allow="fullscreen" allowFullScreen />)}
-          {url.trim() && !video.error && <p className="text-xs text-stone-500"><a href={url.trim()} target="_blank" rel="noopener noreferrer" className="underline">打开原视频检查</a> · 请确认可以播放，字幕对应同一个视频；网址格式检查通过不代表视频允许嵌入。</p>}
+          {type === 'audio' && url.trim() && !sourceError && <audio controls src={url.startsWith('/api/media/') ? apiUrl(url) : url} crossOrigin={url.startsWith('/api/media/') ? 'use-credentials' : undefined} onError={() => setMediaError('音频无法加载，请检查链接或重新上传。')} onLoadedMetadata={event => { if (Number.isFinite(event.currentTarget.duration)) setDuration(String(event.currentTarget.duration)); }} className="w-full" />}
+          {type === 'video' && video.preview && (video.direct ? <video key={video.preview} controls src={video.preview.startsWith('/api/media/') ? apiUrl(video.preview) : video.preview} crossOrigin={video.preview.startsWith('/api/media/') ? 'use-credentials' : undefined} onLoadedMetadata={event => { if (Number.isFinite(event.currentTarget.duration)) setDuration(String(event.currentTarget.duration)); }} onError={() => setMediaError('视频无法加载，请检查链接是否公开可访问。')} className="aspect-video w-full rounded-lg bg-stone-900" /> : <iframe title="视频发布预览" src={video.preview} className="aspect-video w-full rounded-lg" allow="fullscreen" allowFullScreen />)}
+          {url.trim() && !sourceError && <p className="text-xs text-stone-500"><a href={url.startsWith('/api/media/') ? apiUrl(url) : url.trim()} target="_blank" rel="noopener noreferrer" className="underline">打开原材料检查</a> · 请确认媒体可以播放，字幕对应同一份材料；网址格式检查通过不代表视频允许嵌入。</p>}
           {draftCaptions.length > 0 && <div className="max-h-72 space-y-2 overflow-auto">{draftCaptions.map(caption => <article key={caption.id} className="rounded-lg border border-stone-200 bg-white p-3"><p className="mb-1 font-mono text-xs text-amber-800">{caption.start}s — {caption.end}s</p><p className="text-sm">{caption.text}</p>{caption.translation && <p className="mt-1 text-xs text-stone-500">{caption.translation}</p>}</article>)}</div>}
           {original && <details><summary className="cursor-pointer text-sm font-semibold">查看完整英文原文</summary><p className="mt-3 whitespace-pre-wrap text-sm leading-7">{original}</p></details>}
           {valid && <p className="text-xs text-emerald-700">格式与时间轴检查通过。确认视频与字幕匹配后，点击“确认发布”。</p>}

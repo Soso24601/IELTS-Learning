@@ -37,6 +37,12 @@ import {
 } from './db';
 import { LLMConfig, parseLLMConfig, saveUserLLMConfig, testLLMConfig } from './llm';
 import { assertSafeHttpUrlSync } from './net';
+import { catalogType, materialTags } from './materialCatalog';
+import { decodeMediaUpload, MEDIA_PATH } from './mediaUpload';
+import { DATA_DIR } from './db';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const IS_JSON_KEY = /^ielts_[A-Za-z0-9_]+$/;
 
@@ -100,15 +106,31 @@ function buildAdminMaterialsRouter(): Router {
     try { res.json({ folders: listSharedMaterialFolders(), materials: listSharedMaterials() }); }
     catch (e) { sendError(res, e, '读取材料管理列表失败'); }
   });
+  r.post('/media', (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const { extension, buffer } = decodeMediaUpload(String(req.body?.fileName || ''), String(req.body?.base64 || ''), String(req.body?.type || ''));
+      const directory = path.join(DATA_DIR, 'media');
+      mkdirSync(directory, { recursive: true });
+      const fileName = `${randomUUID()}.${extension}`;
+      writeFileSync(path.join(directory, fileName), buffer, { flag: 'wx' });
+      res.json({ ok: true, url: `/api/media/${fileName}` });
+    } catch (e: any) { sendError(res, new HttpError(400, e.message || '媒体上传失败'), '媒体上传失败'); }
+  });
   const validateMaterial = (raw: any) => {
     if (!raw || typeof raw !== 'object') throw new HttpError(400, '材料格式无效');
     const id = String(raw.id || '').trim();
     const name = String(raw.name || '').trim();
-    const type = ['video', 'link', 'document', 'audio'].includes(raw.type) ? raw.type : 'video';
-    const category = ['reading', 'writing', 'speaking', 'listening'].includes(raw.category) ? raw.category : 'listening';
+    const type = catalogType(raw);
+    const category = ['reading', 'writing', 'speaking', 'listening'].includes(raw.category) ? raw.category : type === 'document' ? 'reading' : 'listening';
     const url = String(raw.url || '').trim();
     if (!id || id.length > 120 || !name || name.length > 200) throw new HttpError(400, '材料需要有效的 ID 和标题');
-    if (url) {
+    if (raw.type !== 'link' && type !== 'document' && !url) throw new HttpError(400, '视频和音频材料需要播放链接或媒体文件');
+    if (MEDIA_PATH.test(url)) {
+      if (!existsSync(path.join(DATA_DIR, 'media', path.basename(url)))) throw new HttpError(400, '材料文件不存在，请重新上传');
+      if (type === 'audio' && !/\.(mp3|wav|m4a|ogg)$/.test(url) || type === 'video' && !/\.(mp4|webm)$/.test(url)) throw new HttpError(400, '材料类型与媒体文件不一致');
+    }
+    if (url && !MEDIA_PATH.test(url)) {
       try { assertSafeHttpUrlSync(url); } catch (e: any) { throw new HttpError(400, e?.message || '材料链接无效'); }
     }
     const material = {
@@ -117,6 +139,8 @@ function buildAdminMaterialsRouter(): Router {
       type,
       category,
       isPublished: raw.isPublished !== false,
+      tags: materialTags(raw.tags),
+      duration: Number.isFinite(Number(raw.duration)) && Number(raw.duration) > 0 ? Number(raw.duration) : undefined,
       folderId: String(raw.folderId || category),
       url: url || undefined,
       content: String(raw.content || ''),

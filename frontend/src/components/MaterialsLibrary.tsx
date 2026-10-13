@@ -38,6 +38,8 @@ import {
 import { subtitleAtTime } from '../lib/subtitles';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder } from '../types';
 import { apiGetMaterialCatalog } from '../lib/authApi';
+import { CatalogType, catalogType, MATERIAL_TYPES, filterCatalog, materialDuration, formatDuration } from '../lib/materialCatalog';
+import { apiUrl } from '../lib/apiUrl';
 import { apiFetch } from '../lib/apiUrl';
 
 export interface TextAnnotation {
@@ -68,7 +70,15 @@ export default function MaterialsLibrary({
   initialWord,
   onClearInitialWord
 }: MaterialsLibraryProps) {
-  const [activeCategory, setActiveCategory] = useState<WordCategory>('reading');
+  const [materialType, setMaterialType] = useState<CatalogType | 'all'>('all');
+  const [materialSearch, setMaterialSearch] = useState('');
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogReload, setCatalogReload] = useState(0);
+  const [mediaPlaybackError, setMediaPlaybackError] = useState('');
+  const [recentIds, setRecentIds] = useState<string[]>(() => {
+    try { const ids = JSON.parse(localStorage.getItem('ielts_recent_material_ids') || '[]'); return Array.isArray(ids) ? ids.filter(id => typeof id === 'string').slice(0, 5) : []; } catch { return []; }
+  });
   
   // Data State loaded from LocalStorage
   const [folders, setFolders] = useState<MaterialFolder[]>([]);
@@ -155,7 +165,7 @@ export default function MaterialsLibrary({
     isAutoSyncSubtitlesRef.current = isAutoSyncSubtitles;
   }, [isAutoSyncSubtitles]);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const videoRef = useRef<HTMLMediaElement | null>(null);
   
 
   const subtitlesContainerRef = useRef<HTMLDivElement | null>(null);
@@ -236,6 +246,17 @@ export default function MaterialsLibrary({
     return materials.find(m => m.id === selectedMaterialId);
   }, [materials, selectedMaterialId]);
 
+  const activeCategory: WordCategory = activeMaterial?.category || (activeMaterial && catalogType(activeMaterial) === 'document' ? 'reading' : 'listening');
+
+  useEffect(() => {
+    if (!selectedMaterialId) return;
+    setRecentIds(previous => {
+      const ids = [selectedMaterialId, ...previous.filter(id => id !== selectedMaterialId)].slice(0, 5);
+      localStorage.setItem('ielts_recent_material_ids', JSON.stringify(ids));
+      return ids;
+    });
+  }, [selectedMaterialId]);
+
   // Max subtitle end time helper
   const maxSubtitleTime = useMemo(() => {
     if (!activeMaterial || !activeMaterial.videoSubtitles || activeMaterial.videoSubtitles.length === 0) return 60;
@@ -260,6 +281,7 @@ export default function MaterialsLibrary({
       setActiveSubtitleId(null);
     }
     ytPlayerRef.current = null;
+    setMediaPlaybackError('');
   }, [selectedMaterialId, activeMaterial?.url]);
 
   // Handle YouTube Iframe Player API & 100% Perfect Syncing
@@ -492,7 +514,10 @@ export default function MaterialsLibrary({
 
     // Learning materials are published by admins and read from the shared server catalog.
     // Browser-local legacy materials are never used as a learner fallback.
+    let active = true;
+    setCatalogLoading(true); setCatalogError('');
     void apiGetMaterialCatalog().then(catalog => {
+      if (!active) return;
       const localMaterials: StudyMaterial[] = (() => {
         try { return JSON.parse(localStorage.getItem('ielts_material_files') || '[]'); } catch { return []; }
       })();
@@ -506,8 +531,9 @@ export default function MaterialsLibrary({
       setFolders(catalog.folders as MaterialFolder[]);
       localStorage.setItem('ielts_material_folders', JSON.stringify(catalog.folders));
       localStorage.setItem('ielts_shared_catalog_loaded', 'true');
-    }).catch(error => console.warn('Could not load shared study materials:', error));
-  }, []);
+    }).catch(error => { if (active) setCatalogError(error.message || '暂时无法读取材料，请重试'); }).finally(() => { if (active) setCatalogLoading(false); });
+    return () => { active = false; };
+  }, [catalogReload]);
 
   // Handle source word traceback navigation/selection
   useEffect(() => {
@@ -518,9 +544,7 @@ export default function MaterialsLibrary({
         if (targetMat.folderId) {
           setSelectedFolderId(targetMat.folderId);
         }
-        if (targetMat.category) {
-          setActiveCategory(targetMat.category);
-        }
+        setMaterialType('all'); setMaterialSearch('');
         if (onClearInitialMaterialId) {
           onClearInitialMaterialId();
         }
@@ -1233,9 +1257,15 @@ export default function MaterialsLibrary({
     }
   };
 
+  const handleMediaMetadata = () => {
+    const duration = videoRef.current?.duration;
+    if (!Number.isFinite(duration) || !duration || !selectedMaterialId) return;
+    setMaterials(previous => previous.map(material => material.id === selectedMaterialId ? { ...material, duration } : material));
+  };
+
   // Synchronized video timeline tracker
   const handleVideoTimeUpdate = () => {
-    if (!videoRef.current || !activeMaterial || !activeMaterial.videoSubtitles) return;
+    if (!videoRef.current) return;
     const currentTime = videoRef.current.currentTime;
     setVideoCurrentTime(currentTime);
 
@@ -1466,7 +1496,7 @@ export default function MaterialsLibrary({
     const summaryData = aiSummary;
     
     let md = `# 雅思高分精读材料: ${activeMaterial.name}\n`;
-    md += `科目模块: ${activeCategory.toUpperCase()} | 导出时间: ${new Date().toLocaleDateString()}\n`;
+    md += `材料类型: ${activeMaterial ? MATERIAL_TYPES.find(type => type.id === catalogType(activeMaterial))?.label : ''} | 导出时间: ${new Date().toLocaleDateString()}\n`;
     md += `------------------------------------------------------\n\n`;
     
     md += `## 💡 1. 标注与精读文章内容\n\n`;
@@ -1587,7 +1617,7 @@ export default function MaterialsLibrary({
       </head>
       <body>
         <h1>雅思精读备考材料: ${activeMaterial.name}</h1>
-        <p style="font-size: 12px; color: #666;">模块科目: ${activeCategory.toUpperCase()} | 导出时间: ${new Date().toLocaleDateString()}</p>
+        <p style="font-size: 12px; color: #666;">材料类型: ${activeMaterial ? MATERIAL_TYPES.find(type => type.id === catalogType(activeMaterial))?.label : ''} | 导出时间: ${new Date().toLocaleDateString()}</p>
         
         <h2>1. 标注后文章内容</h2>
         <p style="text-align: justify; font-size: 14px; white-space: pre-wrap;">`;
@@ -1716,7 +1746,7 @@ export default function MaterialsLibrary({
         <button class="print-btn" onclick="window.print()">立即生成 / 打印 PDF</button>
         <h1>雅思学术精读笔记：${activeMaterial.name}</h1>
         <div style="text-align: center; font-size: 12px; color: #666; margin-bottom: 30px;">
-          科目模块: ${activeCategory.toUpperCase()} | 导出时间: ${new Date().toLocaleDateString()}
+          材料类型: ${activeMaterial ? MATERIAL_TYPES.find(type => type.id === catalogType(activeMaterial))?.label : ''} | 导出时间: ${new Date().toLocaleDateString()}
         </div>
         
         <h2>1. 标注后文章内容 (Annotated Content)</h2>
@@ -1844,146 +1874,47 @@ export default function MaterialsLibrary({
     setCurrentSentenceIndex((prev) => (prev + 1) % activeMaterial.sentences!.length);
   };
 
-  // Filter folders and materials for the active module category
-  const filteredFolders = folders.filter(f => f.category === activeCategory);
-  
-  const currentFolderMaterials = useMemo(() => {
-    if (!selectedFolderId) return [];
-    return materials.filter(m => m.folderId === selectedFolderId);
-  }, [materials, selectedFolderId]);
+  const visibleMaterials = filterCatalog<StudyMaterial>(materials, materialType, materialSearch);
+  const recentMaterials = recentIds.flatMap(id => materials.find(material => material.id === id) || []);
+  const openMaterial = (material: StudyMaterial) => {
+    if (materialType !== 'all' && materialType !== catalogType(material)) setMaterialType(catalogType(material));
+    setMaterialSearch('');
+    setSelectedMaterialId(material.id);
+    setSelectedFolderId(material.folderId || null);
+  };
 
   return (
     <div className="space-y-6" id="materials-library-container">
-      {/* Category Tabs Indicator */}
-      <div className="flex items-center justify-between border-b border-stone-200/80 pb-4">
-        <div>
-          <h2 className="text-xl font-serif font-bold text-stone-900 flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-stone-700" />
-            雅思真题学术材料库
-          </h2>
-  <p className="text-xs text-stone-400 mt-1">由管理员统一发布视频和字幕；学习者可播放、跟读并查询词汇</p>
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-5">
+        <div><p className="mb-2 text-[10px] font-mono uppercase tracking-[.2em] text-amber-700">STUDY COLLECTION</p><h2 className="text-2xl font-serif font-bold text-stone-900">学习材料库</h2><p className="mt-2 text-xs text-stone-500">选择视频、音频或文章，开始学习与查词。</p></div>
+        <span className="text-xs text-stone-500">{materials.length} 份材料</span>
+      </header>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-1 rounded-xl bg-stone-100 p-1" role="group" aria-label="材料类型筛选">
+          {[{id:'all',label:'全部材料'}, ...MATERIAL_TYPES].map(tab => <button key={tab.id} aria-pressed={materialType === tab.id} onClick={() => { setMaterialType(tab.id as CatalogType | 'all'); setSelectedMaterialId(null); }} className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${materialType === tab.id ? 'bg-stone-900 text-white' : 'text-stone-500 hover:bg-white'}`}>{tab.label}<span className="ml-2 opacity-60">{filterCatalog(materials, tab.id as CatalogType | 'all').length}</span></button>)}
         </div>
-        
-        {/* Module Switcher */}
-        <div className="flex bg-stone-100 p-1 rounded-xl border border-stone-200">
-          {[
-            { id: 'reading', label: '📖 阅读模块' },
-            { id: 'writing', label: '✍️ 写作模块' },
-            { id: 'speaking', label: '🗣️ 口语模块' },
-            { id: 'listening', label: '🎧 听力模块' }
-          ].map((tab) => {
-            const isActive = activeCategory === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setActiveCategory(tab.id as WordCategory);
-                  setSelectedFolderId(null);
-                  setSelectedMaterialId(null);
-                }}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all ${
-                  isActive 
-                    ? 'bg-white text-stone-950 shadow-xs border border-stone-250/20' 
-                    : 'text-stone-500 hover:text-stone-900'
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
+        <label className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2"><Search className="h-4 w-4 text-stone-400"/><input aria-label="搜索学习材料" value={materialSearch} onChange={event => setMaterialSearch(event.target.value)} placeholder="搜索标题或主题标签" className="min-w-0 bg-transparent text-sm outline-none"/></label>
       </div>
-
+      {!!recentMaterials.length && <section aria-label="最近学习" className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-stone-500">最近学习</span>{recentMaterials.slice(0,3).map(material => <button key={material.id} onClick={() => openMaterial(material)} className="max-w-56 truncate rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">{material.name}</button>)}</section>}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Left Side: Folder & File Explorer (Col Span: 4) */}
-        <div className="lg:col-span-4 bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-4">
-          
-          {/* Header Row: Add Folder button */}
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-mono font-semibold text-stone-400 uppercase tracking-wider">
-              文件夹目录
-            </span>
-          </div>
-
-          {/* Folders List */}
-          <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-            {filteredFolders.length === 0 ? (
-              <p className="text-center text-xs text-stone-400 py-6">管理员尚未发布此分类的材料</p>
-            ) : (
-              filteredFolders.map((folder) => {
-                const isSelected = selectedFolderId === folder.id;
-                return (
-                  <div
-                    key={folder.id}
-                    onClick={() => {
-                      setSelectedFolderId(folder.id);
-                      setSelectedMaterialId(null);
-                    }}
-                    className={`flex items-center justify-between px-3 py-2.5 rounded-xl cursor-pointer border transition ${
-                      isSelected 
-                        ? 'bg-stone-900 text-white border-stone-900 shadow-xs' 
-                        : 'bg-stone-50/40 hover:bg-stone-100/50 border-stone-200/60'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      {isSelected ? <FolderOpen className="h-4 w-4 text-amber-400 shrink-0" /> : <Folder className="h-4 w-4 text-stone-500 shrink-0" />}
-                      <span className="text-xs font-semibold truncate">{folder.name}</span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Files List Section (Only visible when folder is selected) */}
-          {selectedFolderId && (
-            <div className="border-t border-stone-100 pt-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-semibold text-stone-400 uppercase tracking-wider flex items-center gap-1">
-                  <CornerDownRight className="h-3.5 w-3.5" />
-                  材料列表
-                </span>
-                
-              </div>
-
-              {/* Material List Items */}
-              <div className="space-y-1.5 max-h-[250px] overflow-y-auto pr-1">
-                {currentFolderMaterials.length === 0 ? (
-                  <p className="text-center text-xs text-stone-400 py-4">当前文件夹为空</p>
-                ) : (
-                  currentFolderMaterials.map((mat) => {
-                    const isSelected = selectedMaterialId === mat.id;
-                    const TypeIcon = mat.type === 'audio' ? Music 
-                      : mat.type === 'video' ? Video 
-                      : mat.type === 'link' ? LinkIcon : FileText;
-                    
-                    return (
-                      <div
-                        key={mat.id}
-                        onClick={() => setSelectedMaterialId(mat.id)}
-                        className={`flex items-center justify-between px-3 py-2 rounded-xl cursor-pointer border transition ${
-                          isSelected 
-                            ? 'bg-amber-100/65 text-stone-900 border-amber-300' 
-                            : 'bg-stone-50/20 hover:bg-stone-50 border-stone-200/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <TypeIcon className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-amber-600' : 'text-stone-400'}`} />
-                          <span className="text-xs font-medium truncate">{mat.name}</span>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
-
-        </div>
+        <aside className={`${activeMaterial ? "hidden lg:block" : "block"} lg:col-span-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-xs`}>
+          <div className="mb-4 flex items-center justify-between"><h3 className="text-sm font-semibold">浏览材料</h3><span className="text-xs text-stone-400">{visibleMaterials.length} 份</span></div>
+          {catalogLoading ? <p role="status" className="py-8 text-center text-sm text-stone-500">正在读取材料…</p> : catalogError ? <div role="alert" className="rounded-xl bg-rose-50 p-4 text-sm text-rose-700"><p>{catalogError}</p><button onClick={() => setCatalogReload(value => value + 1)} className="mt-3 underline">重新读取</button></div> : !visibleMaterials.length ? <p className="py-8 text-center text-sm text-stone-500">{materials.length ? '没有匹配的材料，请调整筛选或搜索。' : '管理员尚未发布学习材料。'}</p> : <div className="max-h-[650px] space-y-3 overflow-auto">{visibleMaterials.map(material => {
+            const type = catalogType(material);
+            const Icon = type === 'video' ? Video : type === 'audio' ? Music : FileText;
+            const duration = formatDuration(materialDuration(material));
+            let thumbnail = '';
+            if (type === 'video' && material.url) { try { const url = new URL(material.url); const id = url.hostname === 'youtu.be' ? url.pathname.slice(1) : /(^|\.)youtube\.com$/.test(url.hostname) ? url.searchParams.get('v') || url.pathname.match(/^\/(?:embed|shorts)\/([^/]+)/)?.[1] : ''; if (id && /^[\w-]{11}$/.test(id)) thumbnail = `https://i.ytimg.com/vi/${id}/mqdefault.jpg`; } catch {} }
+            return <button key={material.id} aria-pressed={selectedMaterialId === material.id} onClick={() => openMaterial(material)} className={`w-full overflow-hidden rounded-xl border text-left transition ${selectedMaterialId === material.id ? 'border-amber-400 bg-amber-50' : 'border-stone-200 hover:border-stone-400'}`}>
+              <div className="flex h-24 items-center justify-center overflow-hidden bg-stone-100">{thumbnail ? <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover"/> : <Icon className="h-7 w-7 text-stone-400"/>}</div>
+              <div className="p-3"><p className="text-sm font-semibold text-stone-900">{material.name}</p><p className="mt-2 text-[11px] text-stone-500">{MATERIAL_TYPES.find(item => item.id === type)?.label}{duration && ` · ${duration}`}{type !== 'document' && ` · ${material.videoSubtitles?.length ? '有字幕' : '暂无字幕'}`}</p>{!!material.tags?.length && <p className="mt-2 text-[11px] text-amber-800">{material.tags.join(' · ')}</p>}</div>
+            </button>;
+          })}</div>}
+        </aside>
 
         {/* Right Side: Study workspace (Col Span: 8) */}
-        <div className="lg:col-span-8 flex flex-col space-y-6">
+        <div id="material-study-workspace" className="lg:col-span-8 flex flex-col space-y-6">
+          {activeMaterial && <button onClick={() => setSelectedMaterialId(null)} className="inline-flex items-center gap-2 self-start rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600 lg:hidden"><ArrowLeft className="h-3.5 w-3.5" />返回材料列表</button>}
           
           {!activeMaterial ? (
             /* Workspace Empty State */
@@ -1995,7 +1926,7 @@ export default function MaterialsLibrary({
                 {materials.length ? '请先选择一份学习材料' : '管理员尚未发布学习材料'}
               </h3>
               <p className="text-xs text-stone-400 mt-2 max-w-sm leading-relaxed">
-                {materials.length ? '从左侧目录选择材料，即可播放视频、跟随字幕学习并查询词汇。' : '学习材料、视频链接和字幕由管理员统一整理并发布；发布后会显示在这里。'}
+                {materials.length ? '从左侧列表选择材料，即可播放视频、跟随字幕学习并查询词汇。' : '学习材料、视频链接和字幕由管理员统一整理并发布；发布后会显示在这里。'}
               </p>
             </div>
           ) : (
@@ -2015,7 +1946,7 @@ export default function MaterialsLibrary({
                         {activeMaterial.name}
                       </h3>
                       <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest mt-0.5 block">
-                        材料类型: {activeMaterial.type === 'audio' ? '🎧 听力音频' : activeMaterial.type === 'video' ? '🎬 视频材料' : activeMaterial.type === 'link' ? '🌐 网页链接' : '📄 学术文章/文档'}
+                        材料类型: {MATERIAL_TYPES.find(type => type.id === catalogType(activeMaterial))?.label}
                       </span>
                     </div>
                   </div>
@@ -2063,7 +1994,7 @@ export default function MaterialsLibrary({
                 {/* Subtitle / Web URL Link */}
                 {activeMaterial.url && (
                   <p className="text-xs text-stone-500 font-mono truncate">
-                    链接源: <a href={activeMaterial.url} target="_blank" rel="noreferrer" className="text-amber-600 underline hover:text-amber-500">{activeMaterial.url}</a>
+                    原材料: <a href={activeMaterial.url.startsWith('/api/media/') ? apiUrl(activeMaterial.url) : activeMaterial.url} target="_blank" rel="noreferrer" className="text-amber-600 underline hover:text-amber-500">{activeMaterial.url.startsWith('/api/media/') ? '打开已发布的媒体文件' : activeMaterial.url}</a>
                   </p>
                 )}
               </div>
@@ -2074,7 +2005,7 @@ export default function MaterialsLibrary({
                 {/* Left Column: Material Content Box (Col: 8) */}
                 <div className="md:col-span-8 space-y-4">
                   
-                  {activeMaterial.type === 'video' || activeMaterial.type === 'link' ? (
+                  {catalogType(activeMaterial) !== 'document' ? (
                     /* ========================================================= */
                     /* SPECIALIZED BILINGUAL VIDEO & VLOG STUDY SYSTEM           */
                     /* ========================================================= */
@@ -2085,7 +2016,7 @@ export default function MaterialsLibrary({
                           
                           {/* Video Player Box */}
                           <div className="bg-stone-950 border border-stone-800 rounded-2xl overflow-hidden shadow-md relative group">
-                            {isEmbedUrl(activeMaterial?.url) ? (
+                            {catalogType(activeMaterial) === 'audio' ? <audio ref={videoRef as React.RefObject<HTMLAudioElement>} src={activeMaterial.url?.startsWith('/api/media/') ? apiUrl(activeMaterial.url) : activeMaterial.url} crossOrigin={activeMaterial.url?.startsWith('/api/media/') ? 'use-credentials' : undefined} controls onLoadedMetadata={handleMediaMetadata} onTimeUpdate={handleVideoTimeUpdate} onError={() => setMediaPlaybackError('音频暂时无法播放，请刷新或联系管理员检查材料文件。')} className="my-8 w-full px-4" /> : isEmbedUrl(activeMaterial?.url) ? (
                               <div className="relative aspect-video bg-black">
                                 <iframe
                                   id={activeMaterial.url?.includes('youtube') || activeMaterial.url?.includes('youtu.be') ? 'youtube-iframe' : undefined}
@@ -2098,9 +2029,12 @@ export default function MaterialsLibrary({
                               </div>
                             ) : (
                               <video
-                                ref={videoRef}
-                                src={activeMaterial.url}
+                                ref={videoRef as React.RefObject<HTMLVideoElement>}
+                                src={activeMaterial.url?.startsWith('/api/media/') ? apiUrl(activeMaterial.url) : activeMaterial.url}
+                                crossOrigin={activeMaterial.url?.startsWith('/api/media/') ? 'use-credentials' : undefined}
+                                onLoadedMetadata={handleMediaMetadata}
                                 onTimeUpdate={handleVideoTimeUpdate}
+                                onError={() => setMediaPlaybackError('视频暂时无法播放，请联系管理员检查播放链接。')}
                                 controls
                                 className="w-full aspect-video outline-hidden"
                                 poster="https://images.unsplash.com/photo-1516321318423-f06f85e504b3?q=80&w=600&auto=format&fit=crop"
@@ -2200,13 +2134,14 @@ export default function MaterialsLibrary({
                             <p className="mt-2 leading-relaxed">{activeMaterial.transcriptionReport}</p>
                           </details>}
 
+                          {mediaPlaybackError && <p role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{mediaPlaybackError}</p>}
                           {/* Bilingual Subtitle scrolling viewport */}
                           <div className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-3">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-stone-100 pb-2 flex-wrap">
                               <span className="text-xs font-serif font-bold text-stone-900 flex items-center gap-1.5">
                                 <Sparkles className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
                                 {speakingReadingMode === 'continuous' 
-                                  ? '📄 口语素材整段原文 (点击单词可即时译查并收录)' 
+                                  ? '📄 材料完整英文原文 (点击单词可即时译查并收录)'
                                   : '📖 智能中英双语对照字幕 (点击单词可即时译查并收录)'}
                               </span>
                               
@@ -2261,9 +2196,9 @@ export default function MaterialsLibrary({
                                     </div>
                                   </div>
                                   <div className="space-y-1 max-w-md mx-auto">
-                                    <p className="text-xs font-serif font-bold text-stone-800">当前视频暂无中英对照双语字幕</p>
+                                    <p className="text-xs font-serif font-bold text-stone-800">当前材料暂无双语字幕</p>
                                     <p className="text-[11px] text-stone-500 leading-relaxed">
-                                      管理员尚未发布这份材料的字幕。字幕发布后会显示在这里，并按视频进度自动高亮。
+                                      管理员尚未发布这份材料的字幕。字幕发布后会显示在这里，并按播放进度自动高亮。
                                     </p>
                                   </div>
                                 </div>
@@ -2999,7 +2934,7 @@ export default function MaterialsLibrary({
                   <div className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-3">
                     <span className="text-xs font-mono font-semibold text-stone-400 uppercase tracking-wider flex items-center gap-1">
                       <Plus className="h-3.5 w-3.5" />
-                      快捷收录生词到 {activeCategory === 'reading' ? '阅读' : activeCategory === 'writing' ? '写作' : activeCategory === 'speaking' ? '口语' : '听力'} 词书
+                      快捷收录生词到我的词书
                     </span>
 
                     <form onSubmit={handleQuickAddWord} className="space-y-2.5">

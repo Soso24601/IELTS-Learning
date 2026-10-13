@@ -546,7 +546,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
               {[
                 { id: 'dashboard', label: '我的看板', icon: TrendingUp },
                 { id: 'wordlist', label: '我的词书', icon: BookOpen },
-                { id: 'materials', label: '材料文件夹', icon: FolderSync },
+                { id: 'materials', label: '学习材料', icon: FolderSync },
                 { id: 'flashcards', label: '记忆闪卡', icon: Bookmark },
                 { id: 'quizzes', label: '多维自测', icon: Award },
                 { id: 'ai-coach', label: 'AI 辅导中心', icon: Sparkles },
@@ -612,7 +612,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
           {[
             { id: 'dashboard', label: '我的看板', icon: TrendingUp },
             { id: 'wordlist', label: '我的词书', icon: BookOpen },
-            { id: 'materials', label: '材料文件夹', icon: FolderSync },
+            { id: 'materials', label: '学习材料', icon: FolderSync },
             { id: 'flashcards', label: '记忆闪卡', icon: Bookmark },
             { id: 'quizzes', label: '多维自测', icon: Award },
             { id: 'ai-coach', label: 'AI 辅导中心', icon: Sparkles },

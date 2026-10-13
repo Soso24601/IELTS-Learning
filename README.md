@@ -40,7 +40,7 @@ npm run dev:frontend
 - **Root Directory：** `backend`
 - **Build Command：** `npm run build`（若自动识别即可保留默认）
 - **Start Command：** `npm start`
-- 绑定 API 域名，例如 `api.ielts.grincaq.info`
+- 绑定 API 域名，例如 `api.grincaq.info`
 - 设置下方“后端环境变量”表中的变量
 - 挂载持久化 Volume 到 `/app/data`，并设置 `DATA_DIR=/app/data`，确保 SQLite 数据在重新部署后保留
 
@@ -48,7 +48,7 @@ npm run dev:frontend
 
 - **Root Directory：** `frontend`
 - 使用 Vite 静态站点构建，输出目录为 `dist`
-- 设置 `VITE_API_BASE_URL=https://api.ielts.grincaq.info`
+- 设置 `VITE_API_BASE_URL=https://api.grincaq.info`
 - 绑定学习者域名 `ielts.grincaq.info`；管理员工作台通过独立页面 `/admin.html` 访问
 
 ### 后端环境变量
@@ -68,7 +68,7 @@ npm run dev:frontend
 ### 推荐上线顺序
 
 1. 后端 Volume 挂载到 `/app/data`，并设置 `DATA_DIR=/app/data`；同时设置 `ADMIN_USERNAME` 和 `FRONTEND_ORIGIN`。
-2. 确认 `https://api.ielts.grincaq.info/api/health` 正常，再部署前端静态服务。
+2. 确认 `https://api.grincaq.info/api/health` 正常，再部署前端静态服务。
 3. 将 `ielts.grincaq.info` 绑定到前端静态服务，并设置 API 地址。
 4. 在学习者网站注册管理员用户名，然后访问 `https://ielts.grincaq.info/admin.html` 登录工作台；验证材料发布后能出现在学习者材料目录。
 
@@ -91,3 +91,11 @@ npm run build
 ## 其他
 
 Chrome 字幕复制扩展见 `extension/youtube-transcript-copier/README.md`。当前网页不负责从无字幕视频生成转写；材料由管理员整理、发布。
+
+### 按类型管理学习材料
+
+学习页统一按“全部材料、视频、音频、文章”筛选，支持标题与主题标签搜索，显示最近学习的材料。旧材料按原有类型与链接自动归类，无需重新导入。
+
+管理员在 `/admin.html` 选择材料类型、填写主题标签并添加原文或字幕。视频可以贴 YouTube/公开视频链接；音频需要直接可播放的音频链接。管理员也可上传最多 30 MB 的音频（MP3/WAV/M4A/OGG）或视频（MP4/WebM），文件保存于 `DATA_DIR/media`，由已登录用户播放。较大的视频使用公开播放链接。上传后须预览并确认发布，字幕仍由管理员提供。
+
+前端和后端服务都需部署最新版本。前端构建时设置 `VITE_API_BASE_URL=https://api.grincaq.info`；后端设置 `FRONTEND_ORIGIN=https://ielts.grincaq.info`、`DATA_DIR=/app/data` 并保持现有硬盘挂载。

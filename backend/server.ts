@@ -14,6 +14,7 @@ import { assertSafeHttpUrl } from './server/lib/net';
 import { balanceSubtitleCueGroups, splitSubtitleSheetCues } from './server/lib/subtitleSheetGrouping';
 import { createRequire } from 'module';
 import * as XLSX from 'xlsx';
+import { DATA_DIR } from './server/lib/db';
 const require = createRequire(path.join(process.cwd(), 'app.js')); // 兼容 CJS 打包产物（import.meta 在 cjs 下为空）
 const pdf = require('pdf-parse');
 const mammoth = require('mammoth');
@@ -47,6 +48,8 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // 用户系统：全局鉴权门卫 + 账号数据/LLM 配置路由（见 server/lib/routes.ts）
 installUserSystem(app);
+// Authenticated playback; files share the same persistent volume as the database.
+app.use('/api/media', express.static(path.join(DATA_DIR, 'media'), { dotfiles: 'deny' }));
 
 // Robust JSON parsing utility to clean markdown fences (e.g. ```json) and parse safely
 function safeJSONParse<T = any>(text: string): T {

@@ -42,6 +42,7 @@ export function inspectCaptionDraft(source: string) {
 
 export function inspectVideoLink(value: string): { error: string; preview: string; direct: boolean } {
   if (!value.trim()) return { error: '', preview: '', direct: false };
+  if (/^\/api\/media\/[0-9a-f-]{36}\.(mp4|webm)$/.test(value.trim())) return { error: '', preview: value.trim(), direct: true };
   try {
     const url = new URL(value.trim());
     if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
@@ -54,4 +55,15 @@ export function inspectVideoLink(value: string): { error: string; preview: strin
     const direct = /\.(mp4|webm|ogg)(?:$)/i.test(url.pathname);
     return { error: '', preview: direct ? url.href : '', direct };
   } catch { return { error: '请填写完整的 http:// 或 https:// 视频链接', preview: '', direct: false }; }
+}
+
+export function inspectAudioLink(value: string): string {
+  if (!value.trim()) return '';
+  if (/^\/api\/media\/[0-9a-f-]{36}\.(mp3|wav|m4a|ogg)$/.test(value.trim())) return '';
+  try {
+    const url = new URL(value.trim());
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+    if (/(^|\.)(youtube\.com|youtu\.be|bilibili\.com)$/.test(url.hostname)) return '音频需要可直接播放的文件链接，请选择音频文件或将类型改为视频';
+    return '';
+  } catch { return '请填写完整的音频文件链接，或上传音频文件'; }
 }
