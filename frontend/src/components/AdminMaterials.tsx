@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { apiDeleteSharedMaterial, apiGetAdminMaterials, apiImportSharedMaterials, apiSaveSharedMaterial, apiSnapshot } from '../lib/authApi';
 import { subtitlesToOriginalTranscript } from '../lib/subtitles';
-import { catalogType, CatalogType, MATERIAL_TYPES, materialTags } from '../lib/materialCatalog';
+import { catalogType, CatalogType, MATERIAL_TYPES, MATERIAL_TOPICS, catalogTopics, materialTags } from '../lib/materialCatalog';
 import { apiUrl } from '../lib/apiUrl';
 import { apiFetch } from '../lib/apiUrl';
 import { inspectAudioLink, inspectCaptionDraft, inspectVideoLink, subtitleFileToDraft } from '../lib/materialDraft';
@@ -29,7 +29,8 @@ export default function AdminMaterials() {
   const [editingId, setEditingId] = useState('');
   const [name, setName] = useState('');
   const [type, setType] = useState<CatalogType>('video');
-  const [tags, setTags] = useState('');
+  const [tags, setTags] = useState<string[]>([]);
+  const topicOptions = [...new Set([...MATERIAL_TOPICS, ...catalogTopics(materials), ...tags])];
   const [duration, setDuration] = useState('');
   const [url, setUrl] = useState('');
   const [content, setContent] = useState('');
@@ -57,7 +58,7 @@ export default function AdminMaterials() {
   useEffect(() => { void load(); }, []);
 
   const resetForm = () => {
-    setEditingPublished(true); setEditingId(''); setName(''); setType('video'); setTags(''); setDuration(''); setUrl(''); setContent(''); setCaptionText(''); setPreviewing(false); setMediaError('');
+    setEditingPublished(true); setEditingId(''); setName(''); setType('video'); setTags([]); setDuration(''); setUrl(''); setContent(''); setCaptionText(''); setPreviewing(false); setMediaError('');
   };
 
   const handleMediaFile = async (file?: File) => {
@@ -131,7 +132,7 @@ export default function AdminMaterials() {
 
   const handleEdit = (material: Material) => {
     setEditingPublished(material.isPublished !== false);
-    setEditingId(material.id); setName(material.name); setType(catalogType(material)); setTags((material.tags || []).join('，')); setDuration(material.duration ? String(material.duration) : '');
+    setEditingId(material.id); setName(material.name); setType(catalogType(material)); setTags(materialTags(material.tags)); setDuration(material.duration ? String(material.duration) : '');
     setUrl(material.url || ''); setContent(material.content === subtitlesToOriginalTranscript(material.videoSubtitles || []) ? '' : material.content || '');
     setCaptionText((material.videoSubtitles || []).map(caption => `[${caption.start}-${caption.end}] ${caption.text}${caption.translation ? ` | ${caption.translation}` : ''}`).join('\n'));
     setPreviewing(false); setMediaError('');
@@ -210,7 +211,13 @@ export default function AdminMaterials() {
           <span className="block font-normal text-stone-500">最多 30 MB，保存到服务器持久化硬盘。上传后仍需确认发布。</span>
         </label>}
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-semibold text-stone-600">主题标签<input value={tags} onChange={event => setTags(event.target.value)} placeholder="日常生活，科技，校园" className="mt-1 w-full rounded-lg border border-stone-300 p-2 text-sm" /></label>
+          <fieldset className="space-y-2 sm:col-span-2">
+            <legend className="text-xs font-semibold text-stone-600">选择话题（可多选）</legend>
+            <p className="text-xs text-stone-500">最多选择 12 个话题，学习者可以按话题筛选材料。</p>
+            <div className="flex flex-wrap gap-2">{topicOptions.map(topic => <label key={topic} className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs transition ${tags.includes(topic) ? 'border-amber-400 bg-amber-50 text-amber-900' : 'border-stone-200 bg-white text-stone-600'}`}>
+              <input type="checkbox" checked={tags.includes(topic)} disabled={!tags.includes(topic) && tags.length >= 12} onChange={event => { const checked = event.target.checked; setTags(previous => checked ? [...previous, topic] : previous.filter(tag => tag !== topic)); }} className="accent-amber-700" />{topic}
+            </label>)}</div>
+          </fieldset>
           {type !== 'document' && <label className="text-xs font-semibold text-stone-600">媒体时长（秒，可留空）<input type="number" min="0.1" step="any" value={duration} onChange={event => setDuration(event.target.value)} className="mt-1 w-full rounded-lg border border-stone-300 p-2 text-sm" /></label>}
         </div>
         <label className="block space-y-1 text-xs font-semibold text-stone-600">字幕文件

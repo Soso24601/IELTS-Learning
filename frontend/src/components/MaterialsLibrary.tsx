@@ -38,7 +38,7 @@ import {
 import { subtitleAtTime } from '../lib/subtitles';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder } from '../types';
 import { apiGetMaterialCatalog } from '../lib/authApi';
-import { CatalogType, catalogType, MATERIAL_TYPES, filterCatalog, materialDuration, formatDuration } from '../lib/materialCatalog';
+import { CatalogType, catalogType, MATERIAL_TYPES, catalogTopics, filterCatalog, materialDuration, formatDuration } from '../lib/materialCatalog';
 import { apiUrl } from '../lib/apiUrl';
 import { apiFetch } from '../lib/apiUrl';
 
@@ -72,6 +72,7 @@ export default function MaterialsLibrary({
 }: MaterialsLibraryProps) {
   const [materialType, setMaterialType] = useState<CatalogType | 'all'>('all');
   const [materialSearch, setMaterialSearch] = useState('');
+  const [selectedTopic, setSelectedTopic] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState('');
   const [catalogReload, setCatalogReload] = useState(0);
@@ -544,7 +545,7 @@ export default function MaterialsLibrary({
         if (targetMat.folderId) {
           setSelectedFolderId(targetMat.folderId);
         }
-        setMaterialType('all'); setMaterialSearch('');
+        setMaterialType('all'); setMaterialSearch(''); setSelectedTopic('');
         if (onClearInitialMaterialId) {
           onClearInitialMaterialId();
         }
@@ -1874,11 +1875,14 @@ export default function MaterialsLibrary({
     setCurrentSentenceIndex((prev) => (prev + 1) % activeMaterial.sentences!.length);
   };
 
-  const visibleMaterials = filterCatalog<StudyMaterial>(materials, materialType, materialSearch);
+  const visibleMaterials = filterCatalog<StudyMaterial>(materials, materialType, materialSearch, selectedTopic);
+  const availableTopics = catalogTopics(materials);
+  const topicOptions = selectedTopic && !availableTopics.includes(selectedTopic) ? [...availableTopics, selectedTopic] : availableTopics;
   const recentMaterials = recentIds.flatMap(id => materials.find(material => material.id === id) || []);
   const openMaterial = (material: StudyMaterial) => {
     if (materialType !== 'all' && materialType !== catalogType(material)) setMaterialType(catalogType(material));
     setMaterialSearch('');
+    if (selectedTopic && !material.tags?.includes(selectedTopic)) setSelectedTopic('');
     setSelectedMaterialId(material.id);
     setSelectedFolderId(material.folderId || null);
   };
@@ -1893,7 +1897,14 @@ export default function MaterialsLibrary({
         <div className="flex flex-wrap gap-1 rounded-xl bg-stone-100 p-1" role="group" aria-label="材料类型筛选">
           {[{id:'all',label:'全部材料'}, ...MATERIAL_TYPES].map(tab => <button key={tab.id} aria-pressed={materialType === tab.id} onClick={() => { setMaterialType(tab.id as CatalogType | 'all'); setSelectedMaterialId(null); }} className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${materialType === tab.id ? 'bg-stone-900 text-white' : 'text-stone-500 hover:bg-white'}`}>{tab.label}<span className="ml-2 opacity-60">{filterCatalog(materials, tab.id as CatalogType | 'all').length}</span></button>)}
         </div>
+        <div className="flex flex-wrap gap-3">
+          <label className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600">话题
+            <select aria-label="按话题筛选" value={selectedTopic} onChange={event => { setSelectedTopic(event.target.value); setSelectedMaterialId(null); }} className="min-w-0 bg-transparent text-sm outline-none">
+              <option value="">全部话题</option>{topicOptions.map(topic => <option key={topic} value={topic}>{topic}</option>)}
+            </select>
+          </label>
         <label className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2"><Search className="h-4 w-4 text-stone-400"/><input aria-label="搜索学习材料" value={materialSearch} onChange={event => setMaterialSearch(event.target.value)} placeholder="搜索标题或主题标签" className="min-w-0 bg-transparent text-sm outline-none"/></label>
+        </div>
       </div>
       {!!recentMaterials.length && <section aria-label="最近学习" className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-stone-500">最近学习</span>{recentMaterials.slice(0,3).map(material => <button key={material.id} onClick={() => openMaterial(material)} className="max-w-56 truncate rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">{material.name}</button>)}</section>}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

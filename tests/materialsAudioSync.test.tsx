@@ -30,6 +30,8 @@ test('audio published without a folder plays with timed subtitles and appears in
     assert.match(tree.root.findByProps({id:'sub-b'}).props.className, /border-amber-500/);
     assert.doesNotMatch(tree.root.findByProps({id:'sub-a'}).props.className, /border-amber-500/);
     assert.deepEqual(JSON.parse(values.get('ielts_recent_material_ids')!), ['audio']);
+    await act(async () => tree.root.findByProps({'aria-label':'按话题筛选'}).props.onChange({target:{value:'科技'}}));
+    assert.equal(tree.root.findByProps({'aria-label':'按话题筛选'}).props.value, '科技');
     await act(async () => tree.root.findByProps({'aria-label':'搜索学习材料'}).props.onChange({target:{value:'科技'}}));
     assert.ok(tree.root.findAllByType('p').some((node: any) => node.children.includes('Science lecture')));
   } finally {

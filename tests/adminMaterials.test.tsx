@@ -27,6 +27,7 @@ test('admin preview blocks bad rows and failed publishes keep the draft for retr
     const submit = async () => act(async () => tree.root.findByType('form').props.onSubmit({ preventDefault() {} }));
     await change(tree.root.findByProps({ placeholder: '例如：Nanotechnology and Its Applications' }), 'Lesson');
     await change(tree.root.findByType('select'), 'document');
+    await act(async () => tree.root.findAllByType('label').find((node: any) => node.children.includes('科技')).findByType('input').props.onChange({ target: { checked: true } }));
     await change(tree.root.findAllByType('textarea')[0], '[0-2] Hello.\nbad row');
     await submit();
     await submit();
@@ -41,6 +42,7 @@ test('admin preview blocks bad rows and failed publishes keep the draft for retr
     await submit();
     assert.equal(saved.content, 'Hello. Welcome back.');
     assert.equal(saved.videoSubtitles.length, 2);
+    assert.deepEqual(saved.tags, ['科技']);
     assert.equal(tree.root.findAllByType('textarea')[0].props.value, '');
     assert.ok(tree.root.findAllByProps({ role: 'status' }).some((node: any) => node.children.join('').includes('已发布')));
     await act(async () => tree.root.findAllByType('button').find((node: any) => node.children.join('') === '下架').props.onClick());

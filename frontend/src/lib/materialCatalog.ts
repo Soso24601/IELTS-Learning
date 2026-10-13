@@ -5,6 +5,13 @@ export const MATERIAL_TYPES = [
   { id: 'document', label: '文章' },
 ] as const;
 
+export const MATERIAL_TOPICS = ['日常生活', '校园', '教育', '科技', '环境', '健康', '职场', '商业与经济', '旅行', '文化与艺术', '社会', '历史', '体育'];
+
+export function catalogTopics(materials: { tags?: unknown }[]): string[] {
+  const existing = [...new Set(materials.flatMap(material => materialTags(material.tags)))];
+  return [...MATERIAL_TOPICS.filter(topic => existing.includes(topic)), ...existing.filter(topic => !MATERIAL_TOPICS.includes(topic)).sort((a, b) => a.localeCompare(b, 'zh-CN'))];
+}
+
 /** Old web links are videos only when they identify a supported video source. */
 export function catalogType(material: { type?: string; url?: string }): CatalogType {
   if (material.type === 'audio' || material.type === 'video') return material.type;
@@ -28,9 +35,12 @@ export function materialDuration(material: { duration?: number; videoSubtitles?:
   return (material.videoSubtitles || []).reduce((duration, cue) => Number.isFinite(cue.end) ? Math.max(duration, cue.end) : duration, 0);
 }
 
-export function filterCatalog<T extends { type?: string; url?: string; name: string; tags?: string[] }>(materials: T[], type: CatalogType | 'all', query = ''): T[] {
+export function filterCatalog<T extends { type?: string; url?: string; name: string; tags?: string[] }>(materials: T[], type: CatalogType | 'all', query = '', topic = ''): T[] {
   const search = query.trim().toLowerCase();
-  return materials.filter(material => (type === 'all' || catalogType(material) === type) && (!search || [material.name, ...(material.tags || [])].join(' ').toLowerCase().includes(search)));
+  return materials.filter(material => {
+    const tags = materialTags(material.tags);
+    return (type === 'all' || catalogType(material) === type) && (!topic || tags.includes(topic)) && (!search || [material.name, ...tags].join(' ').toLowerCase().includes(search));
+  });
 }
 
 export function formatDuration(seconds: number): string {

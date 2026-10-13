@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { catalogType, filterCatalog, materialTags, materialDuration } from '../frontend/src/lib/materialCatalog';
+import { catalogType, catalogTopics, filterCatalog, materialTags, materialDuration } from '../frontend/src/lib/materialCatalog';
 import { decodeMediaUpload, MEDIA_PATH } from '../backend/server/lib/mediaUpload';
 
 test('catalog groups old and new materials by format regardless of IELTS category or folder', () => {
@@ -16,6 +16,20 @@ test('catalog groups old and new materials by format regardless of IELTS categor
   assert.equal(catalogType({ type: 'link', url: 'https://youtube.com.fake.example/article' }), 'document');
   assert.deepEqual(materialTags('日常生活，科技, 科技'), ['日常生活', '科技']);
   assert.equal(materialDuration({ duration: 90, videoSubtitles: [{ end: 50 }] }), 90);
+});
+
+test('topic filtering combines exact topic, type and search without dropping legacy topics', () => {
+  const materials = [
+    { name: 'Lecture', type: 'audio', tags: ['科技', '教育'] },
+    { name: 'Vlog', type: 'video', tags: ['科技'] },
+    { name: 'News', type: 'document', tags: ['科技新闻'] },
+    { name: 'Untagged', type: 'document' },
+  ];
+  assert.deepEqual(filterCatalog(materials, 'all', '', '科技').map(item => item.name), ['Lecture', 'Vlog']);
+  assert.deepEqual(filterCatalog(materials, 'audio', 'lec', '科技').map(item => item.name), ['Lecture']);
+  assert.equal(filterCatalog(materials, 'audio', 'Vlog', '科技').length, 0);
+  assert.equal(filterCatalog(materials, 'all').length, 4);
+  assert.deepEqual(catalogTopics(materials), ['教育', '科技', '科技新闻']);
 });
 
 test('media uploads enforce format and size and reject disguised files', () => {
