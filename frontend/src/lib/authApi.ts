@@ -104,6 +104,10 @@ export function apiSaveSharedMaterial(material: Record<string, any>): Promise<{ 
   return req('/api/admin/materials', { method: 'PUT', body: JSON.stringify({ material }) });
 }
 
+export function apiGetAdminMaterials(): Promise<SharedMaterialCatalog> {
+  return req('/api/admin/materials');
+}
+
 export function apiDeleteSharedMaterial(id: string): Promise<{ ok: boolean }> {
   return req(`/api/admin/materials/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

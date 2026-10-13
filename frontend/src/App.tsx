@@ -576,6 +576,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
 
             {/* Quick Stats Summary Right Section */}
             <div className="flex items-center gap-3">
+              {user.isAdmin && <a href="/admin.html" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">管理材料</a>}
               <div className="hidden sm:flex items-center gap-1 bg-stone-100 border px-3 py-1.5 rounded-full text-xs font-mono font-medium text-stone-600">
                 <Flame className="h-4 w-4 text-amber-500" />
                 <span>{streak} 天</span>

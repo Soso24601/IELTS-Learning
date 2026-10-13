@@ -80,7 +80,7 @@ function buildCatalogRouter(): Router {
   const r = createRouter();
   r.get('/materials', (_req: Request, res: Response) => {
     try {
-      res.json({ folders: listSharedMaterialFolders(), materials: listSharedMaterials() });
+      res.json({ folders: listSharedMaterialFolders(), materials: listSharedMaterials().filter(material => material.isPublished !== false) });
     } catch (e) {
       sendError(res, e, '读取学习材料失败');
     }
@@ -95,6 +95,11 @@ function buildAdminMaterialsRouter(): Router {
     res.status(403).json({ error: '只有管理员可以管理共享学习材料。请在服务环境变量中配置 ADMIN_USERNAME。' });
     return false;
   };
+  r.get('/', (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try { res.json({ folders: listSharedMaterialFolders(), materials: listSharedMaterials() }); }
+    catch (e) { sendError(res, e, '读取材料管理列表失败'); }
+  });
   const validateMaterial = (raw: any) => {
     if (!raw || typeof raw !== 'object') throw new HttpError(400, '材料格式无效');
     const id = String(raw.id || '').trim();
@@ -111,6 +116,7 @@ function buildAdminMaterialsRouter(): Router {
       name,
       type,
       category,
+      isPublished: raw.isPublished !== false,
       folderId: String(raw.folderId || category),
       url: url || undefined,
       content: String(raw.content || ''),
