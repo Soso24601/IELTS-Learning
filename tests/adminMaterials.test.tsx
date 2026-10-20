@@ -6,6 +6,7 @@ import AdminMaterials from '../frontend/src/components/AdminMaterials';
 
 test('admin preview blocks bad rows and failed publishes keep the draft for retry', async () => {
   const previousFetch = globalThis.fetch;
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
   const previousAct = (globalThis as any).IS_REACT_ACT_ENVIRONMENT;
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   let saved: any = null;
@@ -26,8 +27,12 @@ test('admin preview blocks bad rows and failed publishes keep the draft for retr
     const change = async (node: any, value: string) => act(async () => node.props.onChange({ target: { value } }));
     const submit = async () => act(async () => tree.root.findByType('form').props.onSubmit({ preventDefault() {} }));
     await change(tree.root.findByProps({ placeholder: '例如：Nanotechnology and Its Applications' }), 'Lesson');
-    await change(tree.root.findByType('select'), 'document');
-    await act(async () => tree.root.findAllByType('label').find((node: any) => node.children.includes('科技')).findByType('input').props.onChange({ target: { checked: true } }));
+    await change(tree.root.findAllByType('select')[0], 'document');
+    await change(tree.root.findByProps({ 'aria-label': '主生活领域' }), '饮食与做饭');
+    await change(tree.root.findByProps({ 'aria-label': '主场景' }), '自己做一顿饭');
+    await change(tree.root.findByProps({ 'aria-label': '关联场景生活领域' }), '健康与生活习惯');
+    await act(async () => tree.root.findAllByType('label').find((node: any) => node.children.includes('睡眠与作息')).findByType('input').props.onChange({ target: { checked: true } }));
+    await act(async () => tree.root.findAllByType('label').find((node: any) => node.children.includes('经历讲述')).findByType('input').props.onChange({ target: { checked: true } }));
     await change(tree.root.findAllByType('textarea')[0], '[0-2] Hello.\nbad row');
     await submit();
     await submit();
@@ -42,15 +47,25 @@ test('admin preview blocks bad rows and failed publishes keep the draft for retr
     await submit();
     assert.equal(saved.content, 'Hello. Welcome back.');
     assert.equal(saved.videoSubtitles.length, 2);
-    assert.deepEqual(saved.tags, ['科技']);
+    assert.deepEqual(saved.scene, { domain: '饮食与做饭', primary: '自己做一顿饭', related: ['睡眠与作息'], practice: ['经历讲述'], uses: [] });
+    assert.deepEqual(saved.tags, []);
     assert.equal(tree.root.findAllByType('textarea')[0].props.value, '');
     assert.ok(tree.root.findAllByProps({ role: 'status' }).some((node: any) => node.children.join('').includes('已发布')));
     await act(async () => tree.root.findAllByType('button').find((node: any) => node.children.join('') === '下架').props.onClick());
     assert.equal(saved.isPublished, false);
     assert.ok(tree.root.findAllByType('button').some((node: any) => node.children.join('') === '上架'));
+    (globalThis as any).window = { scrollTo() {} };
+    await act(async () => tree.root.findAllByType('button').find((node: any) => node.children.join('') === '编辑').props.onClick());
+    assert.equal(tree.root.findByProps({ 'aria-label': '主场景' }).props.value, '自己做一顿饭');
+    await change(tree.root.findByProps({ 'aria-label': '主生活领域' }), '学习与校园');
+    assert.equal(tree.root.findByProps({ 'aria-label': '主场景' }).props.value, '');
+    await submit();
+    assert.ok(tree.root.findAllByProps({ role: 'alert' }).length);
   } finally {
     if (tree) await act(async () => tree.unmount());
     globalThis.fetch = previousFetch;
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else delete (globalThis as any).window;
     (globalThis as any).IS_REACT_ACT_ENVIRONMENT = previousAct;
   }
 });

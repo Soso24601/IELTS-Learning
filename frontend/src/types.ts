@@ -28,6 +28,7 @@ export interface IELTSWord {
 export type MaterialType = 'audio' | 'document' | 'video' | 'link';
 
 export interface StudyMaterial {
+  scene?: import('./lib/sceneCatalog').SceneClassification;
   tags?: string[];
   duration?: number;
   isPublished?: boolean;

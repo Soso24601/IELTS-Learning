@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { apiDeleteSharedMaterial, apiGetAdminMaterials, apiImportSharedMaterials, apiSaveSharedMaterial, apiSnapshot } from '../lib/authApi';
 import { subtitlesToOriginalTranscript } from '../lib/subtitles';
-import { catalogType, CatalogType, MATERIAL_TYPES, MATERIAL_TOPICS, catalogTopics, materialTags } from '../lib/materialCatalog';
+import { catalogType, CatalogType, MATERIAL_TYPES, materialTags, filterCatalog } from '../lib/materialCatalog';
+import { SCENE_DOMAINS, scenesInDomain, PRACTICE_DIRECTIONS, EXPRESSION_USES, SceneClassification, validateSceneClassification } from '../lib/sceneCatalog';
 import { apiUrl } from '../lib/apiUrl';
 import { apiFetch } from '../lib/apiUrl';
 import { inspectAudioLink, inspectCaptionDraft, inspectVideoLink, subtitleFileToDraft } from '../lib/materialDraft';
 
 type Caption = { id: string; start: number; end: number; text: string; translation?: string };
-type Material = Record<string, any> & { id: string; name: string; url?: string; content?: string; videoSubtitles?: Caption[] };
+type Material = Record<string, any> & { id: string; name: string; type?: string; tags?: string[]; scene?: SceneClassification; url?: string; content?: string; videoSubtitles?: Caption[] };
 
 function readFileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -30,7 +31,11 @@ export default function AdminMaterials() {
   const [name, setName] = useState('');
   const [type, setType] = useState<CatalogType>('video');
   const [tags, setTags] = useState<string[]>([]);
-  const topicOptions = [...new Set([...MATERIAL_TOPICS, ...catalogTopics(materials), ...tags])];
+  const emptyScene = (): SceneClassification => ({ domain: '', primary: '', related: [], practice: [], uses: [] });
+  const [scene, setScene] = useState<SceneClassification>(emptyScene);
+  const [relatedDomain, setRelatedDomain] = useState('');
+  const [browseDomain, setBrowseDomain] = useState('');
+  const [browseScene, setBrowseScene] = useState('');
   const [duration, setDuration] = useState('');
   const [url, setUrl] = useState('');
   const [content, setContent] = useState('');
@@ -42,8 +47,11 @@ export default function AdminMaterials() {
   const video = inspectVideoLink(url);
   const draftCaptions = inspection.captions;
   const original = content.trim() || subtitlesToOriginalTranscript(draftCaptions);
+  const listedMaterials = filterCatalog<Material>(materials, 'all', search, '', { domain: browseDomain, scene: browseScene });
   const sourceError = type === 'audio' ? inspectAudioLink(url) : video.error;
-  const issues = [...inspection.errors, ...(sourceError ? [sourceError] : []), ...(mediaError ? [mediaError] : []), ...(duration && (!Number.isFinite(Number(duration)) || Number(duration) <= 0) ? ['媒体时长需要为正数'] : [])];
+  let sceneError = '';
+  try { validateSceneClassification(scene); } catch (error: any) { sceneError = error.message; }
+  const issues = [...inspection.errors, ...(sceneError ? [sceneError] : []), ...(sourceError ? [sourceError] : []), ...(mediaError ? [mediaError] : []), ...(duration && (!Number.isFinite(Number(duration)) || Number(duration) <= 0) ? ['媒体时长需要为正数'] : [])];
   const valid = Boolean(name.trim() && (type === 'document' ? original : url.trim()) && !issues.length);
 
   const load = async () => {
@@ -58,6 +66,7 @@ export default function AdminMaterials() {
   useEffect(() => { void load(); }, []);
 
   const resetForm = () => {
+    setScene(emptyScene()); setRelatedDomain('');
     setEditingPublished(true); setEditingId(''); setName(''); setType('video'); setTags([]); setDuration(''); setUrl(''); setContent(''); setCaptionText(''); setPreviewing(false); setMediaError('');
   };
 
@@ -114,7 +123,7 @@ export default function AdminMaterials() {
     const material: Material = {
       id: editingId || `shared-${crypto.randomUUID()}`,
       name: name.trim(), isPublished: editingPublished, type, category: type === 'document' ? 'reading' : 'listening',
-      tags: materialTags(tags), duration: Number(duration) || undefined,
+      scene, tags: materialTags(tags), duration: Number(duration) || undefined,
       folderId: `shared-${type}`, url: url.trim() || undefined,
       content: original, notes: '', timestamp: new Date().toISOString(),
       sentences: original ? original.split(/(?<=[.!?])\s+/).filter(Boolean) : [],
@@ -131,6 +140,7 @@ export default function AdminMaterials() {
   };
 
   const handleEdit = (material: Material) => {
+    setScene(material.scene || emptyScene()); setRelatedDomain('');
     setEditingPublished(material.isPublished !== false);
     setEditingId(material.id); setName(material.name); setType(catalogType(material)); setTags(materialTags(material.tags)); setDuration(material.duration ? String(material.duration) : '');
     setUrl(material.url || ''); setContent(material.content === subtitlesToOriginalTranscript(material.videoSubtitles || []) ? '' : material.content || '');
@@ -211,12 +221,40 @@ export default function AdminMaterials() {
           <span className="block font-normal text-stone-500">最多 30 MB，保存到服务器持久化硬盘。上传后仍需确认发布。</span>
         </label>}
         <div className="grid gap-3 sm:grid-cols-2">
-          <fieldset className="space-y-2 sm:col-span-2">
-            <legend className="text-xs font-semibold text-stone-600">选择话题（可多选）</legend>
-            <p className="text-xs text-stone-500">最多选择 12 个话题，学习者可以按话题筛选材料。</p>
-            <div className="flex flex-wrap gap-2">{topicOptions.map(topic => <label key={topic} className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-xs transition ${tags.includes(topic) ? 'border-amber-400 bg-amber-50 text-amber-900' : 'border-stone-200 bg-white text-stone-600'}`}>
-              <input type="checkbox" checked={tags.includes(topic)} disabled={!tags.includes(topic) && tags.length >= 12} onChange={event => { const checked = event.target.checked; setTags(previous => checked ? [...previous, topic] : previous.filter(tag => tag !== topic)); }} className="accent-amber-700" />{topic}
-            </label>)}</div>
+          <fieldset className="space-y-4 rounded-xl border border-amber-200 bg-amber-50/40 p-4 sm:col-span-2">
+            <legend className="px-1 text-sm font-semibold text-amber-900">场景归类</legend>
+            <p className="text-xs leading-6 text-stone-500">先选择生活领域与主场景，再按需选择跨领域关联场景和练习用途。分类全部使用固定选项。</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-xs font-semibold text-stone-600">主生活领域
+                <select aria-label="主生活领域" value={scene.domain} onChange={event => { const domain = event.target.value; setScene(previous => ({ ...previous, domain, primary: '' })); }} className="w-full rounded-lg border border-stone-300 bg-white p-2 text-sm">
+                  <option value="">请选择生活领域</option>{SCENE_DOMAINS.map(item => <option key={item.name}>{item.name}</option>)}
+                </select>
+              </label>
+              <label className="space-y-1 text-xs font-semibold text-stone-600">主场景
+                <select aria-label="主场景" disabled={!scene.domain} value={scene.primary} onChange={event => { const primary = event.target.value; setScene(previous => ({ ...previous, primary, related: previous.related.filter(item => item !== primary) })); }} className="w-full rounded-lg border border-stone-300 bg-white p-2 text-sm disabled:opacity-50">
+                  <option value="">请选择具体场景</option>{scenesInDomain(scene.domain).map(item => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs font-semibold text-stone-600">添加关联场景（可选，最多两个）
+                <select aria-label="关联场景生活领域" value={relatedDomain} onChange={event => setRelatedDomain(event.target.value)} className="mt-2 w-full rounded-lg border border-stone-300 bg-white p-2 text-sm">
+                  <option value="">选择关联场景所在领域</option>{SCENE_DOMAINS.map(item => <option key={item.name}>{item.name}</option>)}
+                </select>
+              </label>
+              <div className="flex flex-wrap gap-2">{scenesInDomain(relatedDomain).map(item => <label key={item} className="flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs">
+                <input type="checkbox" checked={scene.related.includes(item)} disabled={item === scene.primary || (!scene.related.includes(item) && scene.related.length >= 2)} onChange={event => { const checked = event.target.checked; setScene(previous => ({ ...previous, related: checked ? [...previous.related, item] : previous.related.filter(value => value !== item) })); }} className="accent-amber-700" />{item}
+              </label>)}</div>
+              <div className="flex flex-wrap gap-2">{scene.related.map(item => <button key={item} type="button" aria-label={`移除关联场景：${item}`} onClick={() => setScene(previous => ({ ...previous, related: previous.related.filter(value => value !== item) }))} className="rounded-full border border-amber-300 bg-amber-100 px-3 py-1.5 text-xs text-amber-900">{item} ×</button>)}</div>
+            </div>
+            {([{ key: 'practice', title: '练习方向（可多选）', options: PRACTICE_DIRECTIONS }, { key: 'uses', title: '表达用途（可多选）', options: EXPRESSION_USES }] as const).map(group => <fieldset key={group.key} className="space-y-2">
+              <legend className="mb-2 text-xs font-semibold text-stone-600">{group.title}</legend>
+              <div className="flex flex-wrap gap-2">{group.options.map(item => <label key={item} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${scene[group.key].includes(item) ? 'border-amber-400 bg-amber-100 text-amber-900' : 'border-stone-200 bg-white text-stone-600'}`}>
+                <input type="checkbox" checked={scene[group.key].includes(item)} onChange={event => { const checked = event.target.checked; setScene(previous => ({ ...previous, [group.key]: checked ? [...previous[group.key], item] : previous[group.key].filter(value => value !== item) })); }} className="accent-amber-700" />{item}
+              </label>)}</div>
+            </fieldset>)}
+            <p className="text-xs leading-6 text-stone-500">日常问答、经历讲述、深入讨论分别用于 Part 1、2、3 式练习准备；分类标签不代表已配置题目或官方题库。</p>
+            {!!tags.length && <p className="text-xs text-stone-500">保留的旧话题：{tags.join(' · ')}</p>}
           </fieldset>
           {type !== 'document' && <label className="text-xs font-semibold text-stone-600">媒体时长（秒，可留空）<input type="number" min="0.1" step="any" value={duration} onChange={event => setDuration(event.target.value)} className="mt-1 w-full rounded-lg border border-stone-300 p-2 text-sm" /></label>}
         </div>
@@ -237,6 +275,7 @@ export default function AdminMaterials() {
         </div>
 
         {previewing && <section className="space-y-4 rounded-xl border border-stone-300 bg-stone-50 p-4" aria-label="材料发布预览">
+          <div className="text-sm text-amber-900">{scene.domain && <p>{scene.domain} / {scene.primary || '待选择主场景'}</p>}{!!scene.related.length && <p className="mt-1 text-xs">关联：{scene.related.join(' · ')}</p>}<p className="mt-1 text-xs">{[...scene.practice, ...scene.uses].join(' · ')}</p></div>
           <div className="flex flex-wrap justify-between gap-2"><h3 className="font-serif text-lg font-bold">发布预览 · {name || '未填写标题'}</h3><span className="text-xs text-stone-500">{draftCaptions.length} 段字幕 · {original.split(/\s+/).filter(Boolean).length} 个词</span></div>
           {!name.trim() && <p className="text-sm text-rose-700">请填写材料标题。</p>}
           {!(type === 'document' ? original : url.trim()) && <p className="text-sm text-rose-700">{type === 'document' ? '请填写文章原文。' : '请添加媒体链接或上传媒体文件。'}</p>}
@@ -255,9 +294,13 @@ export default function AdminMaterials() {
       <section className="space-y-3">
         <div className="flex items-center justify-between"><h2 className="font-bold text-stone-900">材料目录</h2><span className="text-xs text-stone-500">{materials.length} 份</span></div>
         <input aria-label="搜索材料" value={search} onChange={event => setSearch(event.target.value)} placeholder="按标题搜索材料" className="w-full rounded-xl border border-stone-300 bg-white p-3 text-sm" />
-        {loading ? <p className="text-sm text-stone-500">正在读取…</p> : materials.length === 0 ? <p className="rounded-xl border border-dashed border-stone-300 p-6 text-center text-sm text-stone-500">共享目录还没有材料。可先迁移旧材料，或发布第一份视频字幕。</p> : materials.filter(material => material.name.toLowerCase().includes(search.toLowerCase())).map(material => (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <select aria-label="管理材料按领域筛选" value={browseDomain} onChange={event => { setBrowseDomain(event.target.value); setBrowseScene(''); }} className="rounded-lg border border-stone-300 bg-white p-2 text-sm"><option value="">全部生活领域</option><option value="unclassified">待分类</option>{SCENE_DOMAINS.map(item => <option key={item.name}>{item.name}</option>)}</select>
+          <select aria-label="管理材料按场景筛选" value={browseScene} disabled={!browseDomain || browseDomain === 'unclassified'} onChange={event => setBrowseScene(event.target.value)} className="rounded-lg border border-stone-300 bg-white p-2 text-sm disabled:opacity-50"><option value="">全部具体场景</option>{scenesInDomain(browseDomain).map(item => <option key={item}>{item}</option>)}</select>
+        </div>
+        {loading ? <p className="text-sm text-stone-500">正在读取…</p> : listedMaterials.length === 0 ? <p className="rounded-xl border border-dashed border-stone-300 p-6 text-center text-sm text-stone-500">没有匹配的材料，可调整筛选或发布新材料。</p> : listedMaterials.map(material => (
           <article key={material.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-stone-200 bg-white p-4">
-            <div className="min-w-0 w-full sm:flex-1"><h3 className="truncate font-semibold text-stone-900">{material.name}<span className="ml-2 text-xs font-normal text-stone-500">{material.isPublished === false ? "已下架" : "已发布"}</span></h3><p className="truncate text-xs text-stone-500">{material.url || '纯文本材料'} · {material.videoSubtitles?.length || 0} 段字幕</p></div>
+            <div className="min-w-0 w-full sm:flex-1"><h3 className="truncate font-semibold text-stone-900">{material.name}<span className="ml-2 text-xs font-normal text-stone-500">{material.isPublished === false ? "已下架" : "已发布"}</span></h3><p className="mt-1 text-xs text-amber-800">{material.scene ? `${material.scene.domain} / ${material.scene.primary}` : '待分类 · 编辑材料补选场景'}</p><p className="truncate text-xs text-stone-500">{material.url || '纯文本材料'} · {material.videoSubtitles?.length || 0} 段字幕</p></div>
             <div className="flex gap-2"><button disabled={!!updatingId || saving} onClick={() => void togglePublication(material)} className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-900 disabled:opacity-50">{updatingId === material.id ? "处理中…" : material.isPublished === false ? "上架" : "下架"}</button><button disabled={saving || !!updatingId} onClick={() => handleEdit(material)} className="rounded-lg border border-stone-300 px-3 py-1.5 text-xs font-semibold">编辑</button><button disabled={saving || !!updatingId} onClick={() => void handleDelete(material.id)} className="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-semibold text-rose-700">删除</button></div>
           </article>
         ))}

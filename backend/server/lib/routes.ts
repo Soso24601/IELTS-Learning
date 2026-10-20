@@ -29,6 +29,7 @@ import {
   getStateValue,
   importState,
   listSharedMaterials,
+  getSharedMaterial,
   listSharedMaterialFolders,
   upsertSharedMaterial,
   upsertSharedMaterialFolder,
@@ -38,6 +39,7 @@ import {
 import { LLMConfig, parseLLMConfig, saveUserLLMConfig, testLLMConfig } from './llm';
 import { assertSafeHttpUrlSync } from './net';
 import { catalogType, materialTags } from './materialCatalog';
+import { validateSceneClassification } from './sceneCatalog';
 import { decodeMediaUpload, MEDIA_PATH } from './mediaUpload';
 import { DATA_DIR } from './db';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -117,7 +119,7 @@ function buildAdminMaterialsRouter(): Router {
       res.json({ ok: true, url: `/api/media/${fileName}` });
     } catch (e: any) { sendError(res, new HttpError(400, e.message || '媒体上传失败'), '媒体上传失败'); }
   });
-  const validateMaterial = (raw: any) => {
+  const validateMaterial = (raw: any, requireScene = false) => {
     if (!raw || typeof raw !== 'object') throw new HttpError(400, '材料格式无效');
     const id = String(raw.id || '').trim();
     const name = String(raw.name || '').trim();
@@ -133,7 +135,13 @@ function buildAdminMaterialsRouter(): Router {
     if (url && !MEDIA_PATH.test(url)) {
       try { assertSafeHttpUrlSync(url); } catch (e: any) { throw new HttpError(400, e?.message || '材料链接无效'); }
     }
+    const existing = getSharedMaterial(id);
+    let scene;
+    try { scene = validateSceneClassification(raw.scene === undefined ? existing?.scene : raw.scene); }
+    catch (error: any) { throw new HttpError(400, error.message); }
+    if (!scene && (existing?.scene || (requireScene && !existing))) throw new HttpError(400, '请选择生活领域与主场景');
     const material = {
+      scene,
       id,
       name,
       type,
@@ -162,7 +170,7 @@ function buildAdminMaterialsRouter(): Router {
   r.put('/', (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     try {
-      const material = validateMaterial(req.body?.material);
+      const material = validateMaterial(req.body?.material, true);
       upsertSharedMaterial(material.id, material);
       res.json({ ok: true, material });
     } catch (e) { sendError(res, e, '保存材料失败'); }
@@ -174,7 +182,7 @@ function buildAdminMaterialsRouter(): Router {
       const materials = Array.isArray(req.body?.materials) ? req.body.materials : [];
       const folders = Array.isArray(req.body?.folders) ? req.body.folders : [];
       if (materials.length > 5000 || folders.length > 500) throw new HttpError(413, '一次最多导入 5000 份材料和 500 个文件夹');
-      const validated = materials.filter((m: any) => !(typeof m?.url === 'string' && m.url.startsWith('blob:')) && m?.type !== 'audio').map(validateMaterial);
+      const validated = materials.filter((m: any) => !(typeof m?.url === 'string' && m.url.startsWith('blob:')) && m?.type !== 'audio').map(material => validateMaterial(material));
       for (const folder of folders) {
         if (!folder?.id || !folder?.name) continue;
         const safeFolder = { id: String(folder.id).slice(0, 120), name: String(folder.name).slice(0, 200), category: ['reading', 'writing', 'speaking', 'listening'].includes(folder.category) ? folder.category : 'reading', createdAt: String(folder.createdAt || new Date().toISOString()) };

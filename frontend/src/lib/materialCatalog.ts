@@ -1,3 +1,4 @@
+import { matchesScene, sceneNames, SceneClassification } from './sceneCatalog';
 export type CatalogType = 'video' | 'audio' | 'document';
 export const MATERIAL_TYPES = [
   { id: 'video', label: '视频' },
@@ -35,11 +36,13 @@ export function materialDuration(material: { duration?: number; videoSubtitles?:
   return (material.videoSubtitles || []).reduce((duration, cue) => Number.isFinite(cue.end) ? Math.max(duration, cue.end) : duration, 0);
 }
 
-export function filterCatalog<T extends { type?: string; url?: string; name: string; tags?: string[] }>(materials: T[], type: CatalogType | 'all', query = '', topic = ''): T[] {
+export function filterCatalog<T extends { type?: string; url?: string; name: string; tags?: string[]; scene?: SceneClassification }>(materials: T[], type: CatalogType | 'all', query = '', topic = '', sceneFilter: { domain?: string; scene?: string; practice?: string; use?: string } = {}): T[] {
   const search = query.trim().toLowerCase();
   return materials.filter(material => {
     const tags = materialTags(material.tags);
-    return (type === 'all' || catalogType(material) === type) && (!topic || tags.includes(topic)) && (!search || [material.name, ...tags].join(' ').toLowerCase().includes(search));
+    return (type === 'all' || catalogType(material) === type) && (!topic || tags.includes(topic))
+      && matchesScene(material.scene, sceneFilter.domain, sceneFilter.scene, sceneFilter.practice, sceneFilter.use)
+      && (!search || [material.name, ...tags, material.scene?.domain, ...sceneNames(material.scene), ...(material.scene?.uses || []), ...(material.scene?.practice || [])].join(' ').toLowerCase().includes(search));
   });
 }
 

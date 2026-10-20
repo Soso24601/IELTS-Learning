@@ -39,6 +39,7 @@ import { subtitleAtTime } from '../lib/subtitles';
 import { IELTSWord, WordCategory, StudyMaterial, MaterialFolder } from '../types';
 import { apiGetMaterialCatalog } from '../lib/authApi';
 import { CatalogType, catalogType, MATERIAL_TYPES, catalogTopics, filterCatalog, materialDuration, formatDuration } from '../lib/materialCatalog';
+import { SCENE_DOMAINS, scenesInDomain, PRACTICE_DIRECTIONS, EXPRESSION_USES, matchesScene } from '../lib/sceneCatalog';
 import { apiUrl } from '../lib/apiUrl';
 import { apiFetch } from '../lib/apiUrl';
 
@@ -73,6 +74,10 @@ export default function MaterialsLibrary({
   const [materialType, setMaterialType] = useState<CatalogType | 'all'>('all');
   const [materialSearch, setMaterialSearch] = useState('');
   const [selectedTopic, setSelectedTopic] = useState('');
+  const [selectedDomain, setSelectedDomain] = useState('');
+  const [selectedScene, setSelectedScene] = useState('');
+  const [selectedPractice, setSelectedPractice] = useState('');
+  const [selectedUse, setSelectedUse] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState('');
   const [catalogReload, setCatalogReload] = useState(0);
@@ -1875,11 +1880,15 @@ export default function MaterialsLibrary({
     setCurrentSentenceIndex((prev) => (prev + 1) % activeMaterial.sentences!.length);
   };
 
-  const visibleMaterials = filterCatalog<StudyMaterial>(materials, materialType, materialSearch, selectedTopic);
+  const sceneFilter = { domain: selectedDomain, scene: selectedScene, practice: selectedPractice, use: selectedUse };
+  const visibleMaterials = filterCatalog<StudyMaterial>(materials, materialType, materialSearch, selectedTopic, sceneFilter);
   const availableTopics = catalogTopics(materials);
   const topicOptions = selectedTopic && !availableTopics.includes(selectedTopic) ? [...availableTopics, selectedTopic] : availableTopics;
   const recentMaterials = recentIds.flatMap(id => materials.find(material => material.id === id) || []);
   const openMaterial = (material: StudyMaterial) => {
+    if (!matchesScene(material.scene, selectedDomain, selectedScene, selectedPractice, selectedUse)) {
+      setSelectedDomain(''); setSelectedScene(''); setSelectedPractice(''); setSelectedUse('');
+    }
     if (materialType !== 'all' && materialType !== catalogType(material)) setMaterialType(catalogType(material));
     setMaterialSearch('');
     if (selectedTopic && !material.tags?.includes(selectedTopic)) setSelectedTopic('');
@@ -1890,9 +1899,24 @@ export default function MaterialsLibrary({
   return (
     <div className="space-y-6" id="materials-library-container">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-5">
-        <div><p className="mb-2 text-[10px] font-mono uppercase tracking-[.2em] text-amber-700">STUDY COLLECTION</p><h2 className="text-2xl font-serif font-bold text-stone-900">学习材料库</h2><p className="mt-2 text-xs text-stone-500">选择视频、音频或文章，开始学习与查词。</p></div>
+        <div><p className="mb-2 text-[10px] font-mono uppercase tracking-[.2em] text-amber-700">ENGLISH IN EVERYDAY LIFE</p><h2 className="text-2xl font-serif font-bold text-stone-900">在生活场景中积累表达</h2><p className="mt-2 text-xs leading-6 text-stone-500">从一次做饭、一段通勤、一次重要选择开始，找到你想说的英语。</p></div>
         <span className="text-xs text-stone-500">{materials.length} 份材料</span>
       </header>
+      <section aria-label="生活场景浏览" className="space-y-4 rounded-2xl border border-stone-200 bg-[#fbf9f4] p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-serif text-lg font-bold text-stone-900">今天想聊什么？</h3><button type="button" onClick={() => { setSelectedDomain(''); setSelectedScene(''); setSelectedPractice(''); setSelectedUse(''); setSelectedTopic(''); setMaterialSearch(''); setMaterialType('all'); setSelectedMaterialId(null); }} className="text-xs text-amber-800 underline">查看全部材料 / 清除筛选</button></div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">{SCENE_DOMAINS.map((domain, index) => {
+          const count = materials.filter(material => matchesScene(material.scene, domain.name)).length;
+          return <button key={domain.name} type="button" aria-pressed={selectedDomain === domain.name} onClick={() => { setSelectedDomain(selectedDomain === domain.name ? '' : domain.name); setSelectedScene(''); setSelectedMaterialId(null); }} className={`flex min-w-0 flex-col items-start rounded-xl border p-3 text-left transition ${selectedDomain === domain.name ? 'border-amber-500 bg-amber-100 text-amber-950' : 'border-stone-200 bg-white text-stone-700 hover:border-amber-400'}`}><span className="mb-2 text-[10px] font-mono text-amber-700">{String(index + 1).padStart(2, '0')} · {count} 份</span><span className="text-sm font-semibold">{domain.name}</span></button>;
+        })}</div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-semibold text-stone-600">生活领域<select aria-label="按生活领域筛选" value={selectedDomain} onChange={event => { setSelectedDomain(event.target.value); setSelectedScene(''); setSelectedMaterialId(null); }} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">全部生活领域</option><option value="unclassified">待分类材料</option>{SCENE_DOMAINS.map(item => <option key={item.name}>{item.name}</option>)}</select></label>
+          <label className="text-xs font-semibold text-stone-600">具体场景<select aria-label="按具体场景筛选" value={selectedScene} disabled={!selectedDomain || selectedDomain === 'unclassified'} onChange={event => { setSelectedScene(event.target.value); setSelectedMaterialId(null); }} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm disabled:opacity-50"><option value="">全部具体场景</option>{scenesInDomain(selectedDomain).map(item => <option key={item}>{item}</option>)}</select></label>
+        </div>
+        <details><summary className="cursor-pointer text-xs font-semibold text-stone-600">按练习方向与表达用途筛选{(selectedPractice || selectedUse) && ' · 已选择'}</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <select aria-label="按练习方向筛选" value={selectedPractice} onChange={event => { setSelectedPractice(event.target.value); setSelectedMaterialId(null); }} className="w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">全部练习方向</option>{PRACTICE_DIRECTIONS.map(item => <option key={item}>{item}</option>)}</select>
+          <select aria-label="按表达用途筛选" value={selectedUse} onChange={event => { setSelectedUse(event.target.value); setSelectedMaterialId(null); }} className="w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">全部表达用途</option>{EXPRESSION_USES.map(item => <option key={item}>{item}</option>)}</select>
+        </div></details>
+      </section>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-1 rounded-xl bg-stone-100 p-1" role="group" aria-label="材料类型筛选">
           {[{id:'all',label:'全部材料'}, ...MATERIAL_TYPES].map(tab => <button key={tab.id} aria-pressed={materialType === tab.id} onClick={() => { setMaterialType(tab.id as CatalogType | 'all'); setSelectedMaterialId(null); }} className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${materialType === tab.id ? 'bg-stone-900 text-white' : 'text-stone-500 hover:bg-white'}`}>{tab.label}<span className="ml-2 opacity-60">{filterCatalog(materials, tab.id as CatalogType | 'all').length}</span></button>)}
@@ -1903,7 +1927,7 @@ export default function MaterialsLibrary({
               <option value="">全部话题</option>{topicOptions.map(topic => <option key={topic} value={topic}>{topic}</option>)}
             </select>
           </label>
-        <label className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2"><Search className="h-4 w-4 text-stone-400"/><input aria-label="搜索学习材料" value={materialSearch} onChange={event => setMaterialSearch(event.target.value)} placeholder="搜索标题或主题标签" className="min-w-0 bg-transparent text-sm outline-none"/></label>
+        <label className="flex min-w-0 items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2"><Search className="h-4 w-4 shrink-0 text-stone-400"/><input aria-label="搜索学习材料" value={materialSearch} onChange={event => { setMaterialSearch(event.target.value); setSelectedMaterialId(null); }} placeholder="搜索标题、场景或表达用途" className="min-w-0 w-full bg-transparent text-sm outline-none"/></label>
         </div>
       </div>
       {!!recentMaterials.length && <section aria-label="最近学习" className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-stone-500">最近学习</span>{recentMaterials.slice(0,3).map(material => <button key={material.id} onClick={() => openMaterial(material)} className="max-w-56 truncate rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">{material.name}</button>)}</section>}
@@ -1918,7 +1942,7 @@ export default function MaterialsLibrary({
             if (type === 'video' && material.url) { try { const url = new URL(material.url); const id = url.hostname === 'youtu.be' ? url.pathname.slice(1) : /(^|\.)youtube\.com$/.test(url.hostname) ? url.searchParams.get('v') || url.pathname.match(/^\/(?:embed|shorts)\/([^/]+)/)?.[1] : ''; if (id && /^[\w-]{11}$/.test(id)) thumbnail = `https://i.ytimg.com/vi/${id}/mqdefault.jpg`; } catch {} }
             return <button key={material.id} aria-pressed={selectedMaterialId === material.id} onClick={() => openMaterial(material)} className={`w-full overflow-hidden rounded-xl border text-left transition ${selectedMaterialId === material.id ? 'border-amber-400 bg-amber-50' : 'border-stone-200 hover:border-stone-400'}`}>
               <div className="flex h-24 items-center justify-center overflow-hidden bg-stone-100">{thumbnail ? <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover"/> : <Icon className="h-7 w-7 text-stone-400"/>}</div>
-              <div className="p-3"><p className="text-sm font-semibold text-stone-900">{material.name}</p><p className="mt-2 text-[11px] text-stone-500">{MATERIAL_TYPES.find(item => item.id === type)?.label}{duration && ` · ${duration}`}{type !== 'document' && ` · ${material.videoSubtitles?.length ? '有字幕' : '暂无字幕'}`}</p>{!!material.tags?.length && <p className="mt-2 text-[11px] text-amber-800">{material.tags.join(' · ')}</p>}</div>
+              <div className="p-3"><p className="text-sm font-semibold text-stone-900">{material.name}</p><p className="mt-2 text-[11px] text-stone-500">{MATERIAL_TYPES.find(item => item.id === type)?.label}{duration && ` · ${duration}`}{type !== 'document' && ` · ${material.videoSubtitles?.length ? '有字幕' : '暂无字幕'}`}</p><p className="mt-2 text-[11px] text-amber-800">{material.scene ? `${material.scene.domain} · ${material.scene.primary}` : '待分类'}</p>{!!material.scene?.practice.length && <p className="mt-1 text-[11px] text-stone-500">{material.scene.practice.join(' · ')}</p>}{!!material.tags?.length && <p className="mt-2 text-[11px] text-stone-500">{material.tags.join(' · ')}</p>}</div>
             </button>;
           })}</div>}
         </aside>
@@ -1956,6 +1980,7 @@ export default function MaterialsLibrary({
                       <h3 className="font-serif font-bold text-stone-950 text-base leading-tight">
                         {activeMaterial.name}
                       </h3>
+                      {activeMaterial.scene && <div className="mt-2 space-y-1 text-xs leading-5 text-amber-800"><p>{activeMaterial.scene.domain} / {activeMaterial.scene.primary}</p>{!!activeMaterial.scene.related.length && <p>也适用：{activeMaterial.scene.related.join(' · ')}</p>}<p>{[...activeMaterial.scene.practice, ...activeMaterial.scene.uses].join(' · ')}</p></div>}
                       <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest mt-0.5 block">
                         材料类型: {MATERIAL_TYPES.find(type => type.id === catalogType(activeMaterial))?.label}
                       </span>
