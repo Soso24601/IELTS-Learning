@@ -1,3 +1,4 @@
+import { SceneArt, domainArt } from './Brand';
 import { uiText, useLanguage } from "../lib/language";
 /**
  * @license
@@ -77,6 +78,7 @@ export default function MaterialsLibrary({
   useLanguage();
   const [materialType, setMaterialType] = useState<CatalogType | 'all'>('all');
   const [materialSearch, setMaterialSearch] = useState('');
+  const [previewMaterialId, setPreviewMaterialId] = useState<string | null>(null);
   const [selectedTopic, setSelectedTopic] = useState('');
   const [learningCategory, setLearningCategory] = useState<WordCategory>('speaking');
   const [selectedDomain, setSelectedDomain] = useState(initialSceneFilter?.domain || '');
@@ -1901,11 +1903,13 @@ export default function MaterialsLibrary({
     setSelectedFolderId(material.folderId || null);
   };
 
+  const previewMaterial = visibleMaterials.find(material => material.id === previewMaterialId) || visibleMaterials[0];
+
   return (
     <div className="ui-page-stack" id="materials-library-container">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div><p className="ui-kicker mb-2">{activeMaterial ? 'IN CONTEXT' : 'SCENE COLLECTION'}</p><h2 className="ui-page-title">{activeMaterial ? uiText('理解原句，留下想用的表达') : uiText('找到你想聊的生活场景')}</h2><p className="ui-description mt-2">{activeMaterial ? uiText('结合原文学习，划选词汇即可查询与收藏。') : uiText('先选场景，再选一份材料。视频、音频和文章都在这里。')}</p></div>
-        <span className="text-xs text-stone-500">{materials.length} {uiText("份材料")}</span>
+      <header className={`library-heading flex flex-wrap items-end justify-between gap-4 ${activeMaterial ? "is-studying" : ""}`}>
+        <div><p className="ui-kicker mb-2">{activeMaterial ? 'IN CONTEXT' : 'SCENE COLLECTION'}</p><h2 className="ui-page-title">{activeMaterial ? uiText('理解原句，留下想用的表达') : uiText('选一段，马上开口。')}</h2><p className="ui-description mt-2">{activeMaterial ? uiText('结合原文学习，划选词汇即可查询与收藏。') : uiText('先选场景，再选一份材料。视频、音频和文章都在这里。')}</p></div>
+        {!activeMaterial && <SceneArt kind="book" className="library-heading-art"/>}<span className="library-total text-xs text-stone-500">{materials.length} {uiText("份材料")}</span>
       </header>
       {!activeMaterial && <section aria-label={uiText("生活场景浏览")} className="ui-filter-panel space-y-4">
         <div className="flex items-center justify-between gap-3"><h3 className="ui-section-title">{uiText("选择一个场景")}</h3><button type="button" onClick={() => { setSelectedDomain(''); setSelectedScene(''); setSelectedPractice(''); setSelectedUse(''); setSelectedTopic(''); setMaterialSearch(''); setMaterialType('all'); }} className="shrink-0 text-xs text-stone-500 underline underline-offset-4">{uiText("清除筛选")}</button></div>
@@ -1928,19 +1932,20 @@ export default function MaterialsLibrary({
       </section>}
       {!activeMaterial && !!recentMaterials.length && <section aria-label={uiText("最近学习")} className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-stone-500">{uiText("最近学习")}</span>{recentMaterials.slice(0,3).map(material => <button key={material.id} onClick={() => openMaterial(material)} className="max-w-56 truncate rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">{material.name}</button>)}</section>}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <aside className={`${activeMaterial ? "hidden" : "block"} lg:col-span-12`}>
-          <div className="mb-4 flex items-center justify-between"><h3 className="text-sm font-semibold">{uiText("浏览材料")}</h3><span className="text-xs text-stone-400">{visibleMaterials.length} {uiText("份")}</span></div>
-          {catalogLoading ? <p role="status" className="py-8 text-center text-sm text-stone-500">{uiText("正在读取材料…")}</p> : catalogError ? <div role="alert" className="rounded-xl bg-rose-50 p-4 text-sm text-rose-700"><p>{catalogError}</p><button onClick={() => setCatalogReload(value => value + 1)} className="mt-3 underline">{uiText("重新读取")}</button></div> : !visibleMaterials.length ? <p className="rounded-2xl border border-dashed border-stone-300 bg-white py-12 text-center text-sm text-stone-500">{materials.length ? uiText('这个场景暂时没有匹配材料，试试其他场景或清除筛选。') : uiText('场景材料正在准备中，发布后会显示在这里。')}</p> : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{visibleMaterials.map(material => {
+        <aside className={`catalog-browser ${activeMaterial ? "hidden" : "block"} lg:col-span-12`}>
+          <div className="catalog-count mb-4 flex items-center justify-between"><h3 className="text-sm font-semibold">{uiText("浏览材料")}</h3><span className="text-xs text-stone-400">{visibleMaterials.length} {uiText("份")}</span></div>
+          {catalogLoading ? <p role="status" className="py-8 text-center text-sm text-stone-500">{uiText("正在读取材料…")}</p> : catalogError ? <div role="alert" className="rounded-xl bg-rose-50 p-4 text-sm text-rose-700"><p>{catalogError}</p><button onClick={() => setCatalogReload(value => value + 1)} className="mt-3 underline">{uiText("重新读取")}</button></div> : !visibleMaterials.length ? <p className="rounded-2xl border border-dashed border-stone-300 bg-white py-12 text-center text-sm text-stone-500">{materials.length ? uiText('这个场景暂时没有匹配材料，试试其他场景或清除筛选。') : uiText('场景材料正在准备中，发布后会显示在这里。')}</p> : <div className="material-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{visibleMaterials.map(material => {
             const type = catalogType(material);
             const Icon = type === 'video' ? Video : type === 'audio' ? Music : FileText;
             const duration = formatDuration(materialDuration(material));
             let thumbnail = '';
             if (type === 'video' && material.url) { try { const url = new URL(material.url); const id = url.hostname === 'youtu.be' ? url.pathname.slice(1) : /(^|\.)youtube\.com$/.test(url.hostname) ? url.searchParams.get('v') || url.pathname.match(/^\/(?:embed|shorts)\/([^/]+)/)?.[1] : ''; if (id && /^[\w-]{11}$/.test(id)) thumbnail = `https://i.ytimg.com/vi/${id}/mqdefault.jpg`; } catch {} }
-            return <button key={material.id} aria-pressed={selectedMaterialId === material.id} onClick={() => openMaterial(material)} className="ui-material-card w-full overflow-hidden text-left transition">
-              <div className="flex h-36 items-center justify-center overflow-hidden bg-[#eaece3]">{thumbnail ? <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover"/> : <Icon className="h-8 w-8 text-[#7c8770]"/>}</div>
+            return <button key={material.id} aria-pressed={previewMaterial?.id === material.id} onClick={() => setPreviewMaterialId(material.id)} className="ui-material-card w-full overflow-hidden text-left transition">
+              <div className={`material-thumbnail material-kind-${type}`}><span className="material-type-badge"><Icon size={14}/>{uiText(MATERIAL_TYPES.find(item => item.id === type)?.label)}</span>{thumbnail ? <img src={thumbnail} alt="" loading="lazy" className="material-cover"/> : <SceneArt kind={type === "document" ? "book" : domainArt(material.scene?.domain || "")}/>}<span className="material-open-badge">↗</span></div>
               <div className="ui-material-caption"><p className="ui-material-name">{material.name}</p><p className="ui-material-meta mt-2">{uiText(MATERIAL_TYPES.find(item => item.id === type)?.label)}{duration && ` · ${duration}`}{type !== 'document' && ` · ${uiText(material.videoSubtitles?.length ? '有字幕' : '暂无字幕')}`}</p><p className="mt-2 text-[11px] text-amber-800">{material.scene ? `${uiText(material.scene.domain)} · ${uiText(material.scene.primary)}` : uiText('待分类')}</p>{!!material.scene?.practice.length && <p className="mt-1 text-[11px] text-stone-500">{material.scene.practice.map(uiText).join(' · ')}</p>}{!!material.tags?.length && <p className="ui-material-meta mt-2">{material.tags.map(uiText).join(' · ')}</p>}</div>
             </button>;
           })}</div>}
+          {!activeMaterial && previewMaterial && !catalogLoading && !catalogError && <section className="material-ticket" aria-label={uiText('素材预览')}><div className="ticket-heading"><span>{uiText('你的练习单')}</span><span>↗</span></div><p className="ui-kicker">READY WHEN YOU ARE</p><h3>{previewMaterial.name}</h3><p className="ticket-meta">{uiText(MATERIAL_TYPES.find(item=>item.id===catalogType(previewMaterial))?.label)}{materialDuration(previewMaterial)>0 && ` · ${formatDuration(materialDuration(previewMaterial))}`}</p><div className="ticket-section"><p>{uiText('这份材料，带你走进')}</p><strong>{uiText(previewMaterial.scene?.primary || '真实英语表达')}</strong><span>{uiText(previewMaterial.scene?.domain || '自由学习')}</span></div>{!!previewMaterial.scene?.practice.length && <div className="ticket-section"><p>{uiText('可以这样练习')}</p>{previewMaterial.scene.practice.map(item=><span className="ticket-practice" key={item}>✓ {uiText(item)}</span>)}</div>}<button className="ui-button ui-button-primary" onClick={()=>openMaterial(previewMaterial)}>{uiText('就学这份材料')} <ChevronRight size={18}/></button><p className="ticket-note">{uiText('进入后可播放、阅读、划词与收藏。')}</p></section>}
         </aside>
 
         {/* Right Side: Study workspace (Col Span: 8) */}

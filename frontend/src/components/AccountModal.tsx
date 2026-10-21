@@ -47,7 +47,7 @@ interface Props {
 
 function Section({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
   return (
-    <section className="border border-stone-200 rounded-2xl p-4">
+    <section className="account-section border border-stone-200 rounded-2xl p-4">
       <h3 className="flex items-center gap-2 text-sm font-serif font-bold text-stone-800 mb-3">
         {icon}
         {uiText(title)}
@@ -74,6 +74,29 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [importCandidates, setImportCandidates] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!open || typeof document === 'undefined' || !document.body) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const oldOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const panel = dialogRef.current;
+    const focusables = (): HTMLElement[] => panel ? (Array.from(panel.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]')) as HTMLElement[]).filter((el: HTMLElement) => el.getClientRects().length > 0) : [];
+    panel?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); closeRef.current(); }
+      if (event.key === 'Tab') {
+        const items = focusables(), first = items[0], last = items[items.length - 1];
+        if (!first) { event.preventDefault(); return; }
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panel)) { event.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { document.body.style.overflow = oldOverflow; document.removeEventListener('keydown', onKey); previous?.focus(); };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -226,18 +249,19 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
   const modalInput = inputCls;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" onClick={onClose}>
+    <div className="account-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" onClick={onClose}>
       <div
-        className="bg-white rounded-3xl max-w-lg w-full p-5 sm:p-6 max-h-[90vh] overflow-y-auto border border-stone-200 shadow-2xl"
+        ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="account-dialog-title" tabIndex={-1}
+        className="account-dialog bg-white rounded-3xl max-w-lg w-full p-5 sm:p-6 max-h-[90vh] overflow-y-auto border border-stone-200 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-serif font-bold text-base text-stone-900 flex items-center gap-2">
+          <h3 id="account-dialog-title" className="font-serif font-bold text-base text-stone-900 flex items-center gap-2">
             <UserIcon className="w-4 h-4 text-stone-400" />
             {uiText("账号与设置")}
           </h3>
-          <button onClick={onClose} className="p-1 bg-stone-100 hover:bg-stone-200 rounded-lg text-stone-500 transition cursor-pointer">
+          <button aria-label={uiText("关闭账号与设置")} onClick={onClose} className="p-1 bg-stone-100 hover:bg-stone-200 rounded-lg text-stone-500 transition cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -283,7 +307,7 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                 <label className="text-[11px] font-mono text-stone-500 block mb-1">{uiText("选择模型")}</label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {LLM_PROVIDERS.map((p) => (
-                    <button
+                    <button aria-pressed={provider === p.provider}
                       key={p.provider}
                       onClick={() => chooseProvider(p.provider)}
                       className={`px-3 py-2 rounded-xl border text-xs font-medium transition cursor-pointer text-left ${
@@ -363,8 +387,9 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
 
           {/* 3. 学习目标 */}
           <Section icon={<Target className="w-3.5 h-3.5 text-amber-500" />} title={uiText("学习目标")}>
-            <div className="flex gap-2 items-center">
+            <div className="account-goal-row flex gap-2 items-center">
               <input
+                aria-label={uiText("每日学习目标")}
                 type="number"
                 min={5}
                 max={100}

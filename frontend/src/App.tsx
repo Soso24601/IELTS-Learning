@@ -20,7 +20,8 @@ import {
   HelpCircle,
   FolderSync,
   MessageCircle,
-  Ellipsis
+  Ellipsis,
+  ArrowUpRight
 } from 'lucide-react';
 import { presetVocabulary } from './data/vocabulary';
 import { IELTSWord, WordProgress, DailyStats, AISessionHistory, WordCategory } from './types';
@@ -29,6 +30,7 @@ import { PublicUser } from './lib/authApi';
 
 // Importing sub-components
 import Dashboard from './components/Dashboard';
+import Brand from './components/Brand';
 import WordList from './components/WordList';
 import MaterialsLibrary from './components/MaterialsLibrary';
 import Flashcards from './components/Flashcards';
@@ -543,23 +545,17 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
     <div className="learner-app min-h-screen text-stone-850 font-sans flex flex-col selection:bg-amber-200">
       
       {/* Top Academic Elegant Navigation Header */}
-      <header className="bg-white border-b border-stone-200/80 sticky top-0 z-40 shadow-xs" id="app-header">
+      <header className="app-topbar bg-white border-b border-stone-200/80 sticky top-0 z-40 shadow-xs" id="app-header">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16 items-center">
             
             {/* Logo / Title */}
             <button type="button" aria-label={uiText("回到今日口语")} className="flex min-w-0 items-center gap-2.5 text-left sm:gap-3" onClick={() => setActiveTab('dashboard')}>
-              <div className="shrink-0 bg-stone-900 text-amber-400 p-2 rounded-xl flex items-center justify-center border border-stone-850">
-                <Brain className="h-5 w-5" />
-              </div>
-              <div className="min-w-0 text-left">
-                <span className="block truncate font-serif text-base font-bold tracking-tight text-stone-900 sm:text-lg">{uiText("英语 · 场景口语")}</span>
-                <span className="mt-0.5 block text-[9px] uppercase tracking-[.18em] text-stone-400">LIFE INTO WORDS · IELTS</span>
-              </div>
+              <Brand />
             </button>
 
             {/* Desktop Navigation */}
-            <nav aria-label={uiText("主导航")} className="hidden lg:flex items-center space-x-1 text-xs font-semibold">
+            <nav aria-label={uiText("主导航")} className="desktop-top-nav hidden lg:flex items-center space-x-1 text-xs font-semibold">
               {PRIMARY_NAVIGATION.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -648,8 +644,15 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
         </nav>
       )}
 
+      <aside className="app-sidebar" aria-label={uiText("桌面导航")}>
+        <button className="sidebar-brand" onClick={() => setActiveTab('dashboard')} aria-label={uiText("回到今日口语")}><Brand /></button>
+        <nav className="sidebar-links">{PRIMARY_NAVIGATION.map((tab, index) => <button key={tab.id} className={`sidebar-tile tile-${index} ${activeTab === tab.id ? 'is-active' : ''}`} aria-current={activeTab === tab.id ? 'page' : undefined} onClick={() => { setActiveTab(tab.id); if (tab.id === 'materials') { setSceneEntry(null); setTracedMaterialId(null); setTracedWord(null); } setActiveWordForAI(null); }}><span className="tile-number">0{index + 1}</span><ArrowUpRight className="tile-arrow" size={20}/><span className="tile-label">{uiText(tab.label)}</span></button>)}</nav>
+        <div className="sidebar-tools">{STUDY_TOOLS.map(tab => <button key={tab.id} onClick={() => setActiveTab(tab.id)} aria-current={activeTab === tab.id ? 'page' : undefined}><tab.icon size={17}/>{uiText(tab.label)}</button>)}{user.isAdmin && <a href="/admin.html">{uiText("管理员工作台 ↗")}</a>}</div>
+        <button className="sidebar-account" onClick={() => setIsSettingsOpen(true)}><span className="account-avatar">{user.username.slice(0, 1).toUpperCase()}</span><span><strong>Hi, {user.username}</strong><small>{uiText("账号与设置")}</small></span><Settings size={17}/></button>
+      </aside>
+
       {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative">
+      <main id="main-content" className="app-content flex-1 w-full relative">
 
         {/* AI 未配置提示条 */}
         {!user.llmConfigured && activeTab === 'ai-coach' && (
@@ -747,9 +750,9 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-stone-200/80 py-6 text-center text-xs font-mono text-stone-400 mt-auto">
+      <footer className="app-footer bg-white border-t border-stone-200/80 py-6 text-center text-xs font-mono text-stone-400 mt-auto">
         <div className="max-w-7xl mx-auto px-4">
-          <p>{uiText("英语 · 场景口语")}</p>
+          <p>{uiText("开口 · 每天一点，自然表达。")}</p>
           <p className="mt-2 text-[10px] text-stone-400">{uiText("从真实材料积累表达，带回自己的生活。")}</p>
         </div>
       </footer>

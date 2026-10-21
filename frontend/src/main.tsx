@@ -18,14 +18,13 @@ import { clearLocalEntries, countLocalEntries, getLastAccount, setLastAccount, w
 import { disableSync, enableSync, flushAll, getPendingEntries, pushLocalAllToServer, setHydrating } from './lib/sync';
 import './index.css';
 import LanguageSwitch from './components/LanguageSwitch';
+import Brand from './components/Brand';
 
 function Splash({ message }: { message: string }) {
   return (
     <div className="min-h-screen bg-stone-100 flex flex-col items-center justify-center gap-3 font-sans">
       <div className="absolute right-4 top-4"><LanguageSwitch /></div>
-      <div className="w-12 h-12 rounded-2xl bg-stone-900 text-amber-400 flex items-center justify-center animate-pulse">
-        <span className="text-xl">🎓</span>
-      </div>
+      <div className="animate-pulse"><Brand /></div>
       <p className="text-xs text-stone-500">{uiText(message)}</p>
     </div>
   );
@@ -180,7 +179,7 @@ function Root() {
   return (
     <>
       {(syncError || pendingCount > 0) && (
-        <div role="status" className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-900">
+        <div role="status" className="sync-banner bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-900">
           {uiText(syncError) || uiText(`有 ${pendingCount} 项更改正在等待同步，请暂时保留本机数据。`)}
           <button className="ml-3 underline" onClick={() => { void flushAll(); }}>{uiText("重试同步")}</button>
         </div>

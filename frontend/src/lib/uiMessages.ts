@@ -343,4 +343,6 @@ export const UI_MESSAGES: Record<string, string> = {
   "返回登录 ↗": "Sign in ↗",
   "开口 · 每天一点，自然表达。": "SPEAK EVERY DAY. MAKE IT YOURS.",
   "关闭账号与设置": "Close account settings",
+
+  "每日学习目标": "Daily learning goal",
 };
