@@ -1,3 +1,4 @@
+import { uiText, useLanguage } from "../lib/language";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -37,6 +38,7 @@ export default function QuizEngine({
   onToggleStar,
   onRecordQuizResult
 }: QuizEngineProps) {
+  useLanguage();
   const [mode, setMode] = useState<QuizMode>('setup');
   const [selectedType, setSelectedType] = useState<QuestionType>('multiple-choice');
   const [questionCount, setQuestionCount] = useState<number>(10);
@@ -196,15 +198,15 @@ export default function QuizEngine({
       {mode === 'setup' && (
         <div className="bg-white rounded-3xl p-6 border border-stone-200/80 shadow-md space-y-6" id="quiz-setup">
           <div className="text-center space-y-2 pb-2">
-            <h3 className="font-serif font-bold text-2xl text-stone-900">雅思词汇多维自测诊断</h3>
+            <h3 className="font-serif font-bold text-2xl text-stone-900">{uiText("雅思词汇多维自测诊断")}</h3>
             <p className="text-stone-500 text-sm max-w-sm mx-auto">
-              选择适合你的测试模式，实时检测词汇记忆盲区，巩固听说读写能力。
+              {uiText("选择适合你的测试模式，实时检测词汇记忆盲区，巩固听说读写能力。")}
             </p>
           </div>
 
           {/* Test Type Selectors */}
           <div className="space-y-3">
-            <span className="text-xs font-mono text-stone-400 uppercase tracking-widest block">选择诊断形式</span>
+            <span className="text-xs font-mono text-stone-400 uppercase tracking-widest block">{uiText("选择诊断形式")}</span>
             <div className="grid grid-cols-1 gap-3">
               {[
                 {
@@ -246,7 +248,7 @@ export default function QuizEngine({
                       <Icon className="h-5 w-5" />
                     </div>
                     <div>
-                      <h4 className="font-serif font-semibold text-stone-900 text-sm">{type.title}</h4>
+                      <h4 className="font-serif font-semibold text-stone-900 text-sm">{uiText(type.title)}</h4>
                       <p className="text-stone-500 text-xs mt-0.5 leading-relaxed">{type.desc}</p>
                     </div>
                   </button>
@@ -257,7 +259,7 @@ export default function QuizEngine({
 
           {/* Question Count Selectors */}
           <div className="space-y-2">
-            <span className="text-xs font-mono text-stone-400 uppercase tracking-widest block">题目数量 (Questions)</span>
+            <span className="text-xs font-mono text-stone-400 uppercase tracking-widest block">{uiText("题目数量 (Questions)")}</span>
             <div className="grid grid-cols-4 gap-2">
               {[5, 10, 15, 20].map(count => (
                 <button
@@ -270,7 +272,7 @@ export default function QuizEngine({
                       : 'bg-stone-50 border-stone-250 text-stone-600 hover:bg-stone-100'
                   }`}
                 >
-                  {count} 题
+                  {count} {uiText("题")}
                 </button>
               ))}
             </div>
@@ -282,7 +284,7 @@ export default function QuizEngine({
             onClick={handleStartQuiz}
             className="w-full py-3.5 bg-amber-500 hover:bg-amber-600 text-white rounded-2xl font-serif font-bold text-sm transition text-center shadow-md cursor-pointer"
           >
-            开始测试 (Start Diagnostic Quiz)
+            {uiText("开始测试 (Start Diagnostic Quiz)")}
           </button>
         </div>
       )}
@@ -292,10 +294,10 @@ export default function QuizEngine({
         <div className="bg-white rounded-3xl p-6 border border-stone-200/80 shadow-md space-y-6" id="quiz-active">
           {/* Progress Header */}
           <div className="flex items-center justify-between text-xs font-mono text-stone-500">
-            <span>正在测试: <b>{currentIdx + 1} / {questions.length}</b> 题</span>
+            <span>{uiText("正在测试:")} <b>{currentIdx + 1} / {questions.length}</b> {uiText("题")}</span>
             <div className="flex items-center gap-1">
               <span className="h-2 w-2 rounded-full bg-emerald-500 inline-block"></span>
-              <span>得分: <b>{score}</b></span>
+              <span>{uiText("得分:")} <b>{score}</b></span>
             </div>
           </div>
 
@@ -320,7 +322,7 @@ export default function QuizEngine({
                   onClick={() => handleSpeak(currentQuestion.word.word)}
                   className="py-1.5 px-3 bg-amber-500 text-white text-xs font-mono font-medium rounded-lg hover:bg-amber-600 shadow-xs cursor-pointer inline-flex items-center gap-1"
                 >
-                  <Volume2 className="h-3.5 w-3.5" /> 重新播放单词发音
+                  <Volume2 className="h-3.5 w-3.5" /> {uiText("重新播放单词发音")}
                 </button>
                 <p className="text-stone-500 text-xs leading-relaxed pt-2">
                   {currentQuestion.prompt}
@@ -329,24 +331,24 @@ export default function QuizEngine({
             ) : selectedType === 'spelling' ? (
               /* Spelling Mode Sentence block */
               <div className="space-y-3 text-center sm:text-left">
-                <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">考官例句缺省拼写 (拼写整个单词)</span>
+                <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">{uiText("考官例句缺省拼写 (拼写整个单词)")}</span>
                 <div className="p-4 bg-stone-50/60 rounded-2xl border border-stone-200/50 leading-relaxed text-sm text-stone-700 font-serif italic">
                   "{currentQuestion.prompt}"
                 </div>
                 <p className="text-stone-500 text-xs">
-                  中文含义: <b>{currentQuestion.word.chinese}</b> ({currentQuestion.word.partOfSpeech})
+                  {uiText("中文含义:")} <b>{currentQuestion.word.chinese}</b> ({currentQuestion.word.partOfSpeech})
                 </p>
               </div>
             ) : (
               /* Multiple Choice */
               <div className="space-y-2 text-center sm:text-left">
-                <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">选择正确意思</span>
+                <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">{uiText("选择正确意思")}</span>
                 <p className="text-stone-900 font-serif font-bold text-xl">
                   {currentQuestion.word.word} 
                   <span className="text-xs font-mono font-normal text-stone-500 ml-2">({currentQuestion.word.partOfSpeech})</span>
                 </p>
                 <p className="text-stone-500 text-xs font-mono">
-                  音标: {currentQuestion.word.phonetic}
+                  {uiText("音标:")} {currentQuestion.word.phonetic}
                 </p>
               </div>
             )}
@@ -395,7 +397,7 @@ export default function QuizEngine({
                     id="quiz-spelling-input"
                     type="text"
                     disabled={showFeedback}
-                    placeholder="在此输入您的拼写答案..."
+                    placeholder={uiText("在此输入您的拼写答案...")}
                     value={currentAnswer}
                     onChange={(e) => setCurrentAnswer(e.target.value)}
                     onKeyDown={(e) => {
@@ -418,7 +420,7 @@ export default function QuizEngine({
                       onClick={() => handleSubmitAnswer(currentAnswer)}
                       className="px-5 bg-stone-900 hover:bg-stone-850 disabled:bg-stone-100 disabled:text-stone-400 text-white rounded-2xl text-xs font-serif font-bold transition cursor-pointer"
                     >
-                      提交
+                      {uiText("提交")}
                     </button>
                   )}
                 </div>
@@ -434,10 +436,10 @@ export default function QuizEngine({
                       <XCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
                     )}
                     <div className="space-y-1 text-xs leading-relaxed">
-                      <p className="font-bold">{currentQuestion.isCorrect ? '回答完全正确！' : '拼写错误。'}</p>
-                      <p className="font-mono">正确拼写: <b className="text-stone-900 text-sm">{currentQuestion.correctAnswer}</b></p>
+                      <p className="font-bold">{currentQuestion.isCorrect ? uiText('回答完全正确！') : uiText('拼写错误。')}</p>
+                      <p className="font-mono">{uiText("正确拼写:")} <b className="text-stone-900 text-sm">{currentQuestion.correctAnswer}</b></p>
                       {!currentQuestion.isCorrect && (
-                        <p className="text-stone-500 text-[11px]">您的输入: <code>{currentAnswer || '(无输入)'}</code></p>
+                        <p className="text-stone-500 text-[11px]">{uiText("您的输入:")} <code>{currentAnswer || uiText('(无输入)')}</code></p>
                       )}
                     </div>
                   </div>
@@ -450,7 +452,7 @@ export default function QuizEngine({
           {showFeedback && (
             <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/50 space-y-3 animate-fade-in text-xs">
               <div className="flex items-center justify-between">
-                <span className="font-serif font-bold text-stone-800">单词释义详解 (Glossary & Example)</span>
+                <span className="font-serif font-bold text-stone-800">{uiText("单词释义详解 (Glossary & Example)")}</span>
                 <span className="text-[10px] bg-stone-200 text-stone-600 px-1.5 py-0.5 rounded-sm">
                   {currentQuestion.word.topic}
                 </span>
@@ -474,7 +476,7 @@ export default function QuizEngine({
                   className="p-1.5 border border-stone-200 rounded-lg hover:bg-stone-150 transition text-stone-600 flex items-center gap-1 cursor-pointer"
                 >
                   <Star className={`h-3.5 w-3.5 ${progress[currentQuestion.word.id]?.starred ? 'fill-pink-500 text-pink-500' : ''}`} />
-                  收藏这个错词
+                  {uiText("收藏这个错词")}
                 </button>
 
                 <button
@@ -482,7 +484,7 @@ export default function QuizEngine({
                   onClick={handleNext}
                   className="py-1.5 px-4 bg-stone-900 hover:bg-stone-850 text-white rounded-lg text-xs font-serif font-bold transition flex items-center gap-1 cursor-pointer"
                 >
-                  下一题 <ChevronRight className="h-3.5 w-3.5" />
+                  {uiText("下一题")} <ChevronRight className="h-3.5 w-3.5" />
                 </button>
               </div>
             </div>
@@ -498,23 +500,23 @@ export default function QuizEngine({
           </div>
 
           <div className="space-y-2">
-            <h3 className="font-serif font-bold text-2xl text-stone-900">自测诊断完成！</h3>
+            <h3 className="font-serif font-bold text-2xl text-stone-900">{uiText("自测诊断完成！")}</h3>
             <p className="text-stone-500 text-sm max-w-sm mx-auto">
-              你已经完成了本次雅思词汇训练。以下是你的成绩单。
+              {uiText("你已经完成了本次雅思词汇训练。以下是你的成绩单。")}
             </p>
           </div>
 
           <div className="grid grid-cols-3 gap-3 max-w-sm mx-auto font-mono text-center">
             <div className="bg-stone-50 p-3 rounded-2xl border">
-              <span className="text-[10px] text-stone-400 uppercase tracking-wider block">题量</span>
-              <span className="text-xl font-bold text-stone-850">{questions.length} 题</span>
+              <span className="text-[10px] text-stone-400 uppercase tracking-wider block">{uiText("题量")}</span>
+              <span className="text-xl font-bold text-stone-850">{questions.length} {uiText("题")}</span>
             </div>
             <div className="bg-emerald-50 p-3 rounded-2xl border border-emerald-100">
-              <span className="text-[10px] text-emerald-500 uppercase tracking-wider block">答对</span>
-              <span className="text-xl font-bold text-emerald-700">{score} 题</span>
+              <span className="text-[10px] text-emerald-500 uppercase tracking-wider block">{uiText("答对")}</span>
+              <span className="text-xl font-bold text-emerald-700">{score} {uiText("题")}</span>
             </div>
             <div className="bg-amber-50 p-3 rounded-2xl border border-amber-100">
-              <span className="text-[10px] text-amber-500 uppercase tracking-wider block">准确率</span>
+              <span className="text-[10px] text-amber-500 uppercase tracking-wider block">{uiText("准确率")}</span>
               <span className="text-xl font-bold text-amber-700">{Math.round((score / questions.length) * 100)}%</span>
             </div>
           </div>
@@ -523,7 +525,7 @@ export default function QuizEngine({
           {questions.some(q => !q.isCorrect) && (
             <div className="text-left space-y-2.5 max-w-sm mx-auto bg-stone-50/50 p-4 rounded-2xl border border-stone-200/50">
               <h4 className="text-xs font-serif font-bold text-stone-700 flex items-center gap-1">
-                <AlertCircle className="h-3.5 w-3.5 text-red-500" /> 本轮错词（建议加入星标生词）：
+                <AlertCircle className="h-3.5 w-3.5 text-red-500" /> {uiText("本轮错词（建议加入星标生词）：")}
               </h4>
               <div className="flex flex-wrap gap-1.5">
                 {questions.filter(q => !q.isCorrect).map(q => (
@@ -549,7 +551,7 @@ export default function QuizEngine({
                 onClick={() => handleStartQuiz(questions.filter(q => !q.isCorrect).map(q => q.word))}
                 className="flex-1 py-3 px-4 bg-amber-100 hover:bg-amber-200 rounded-xl text-xs font-semibold text-amber-900 transition flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <RotateCcw className="h-4 w-4" /> 重练错词（{questions.filter(q => !q.isCorrect).length}）
+                <RotateCcw className="h-4 w-4" /> {uiText("重练错词（")}{questions.filter(q => !q.isCorrect).length}）
               </button>
             )}
             <button
@@ -557,14 +559,14 @@ export default function QuizEngine({
               onClick={() => setMode('setup')}
               className="flex-1 py-3 px-4 bg-stone-100 hover:bg-stone-200 rounded-xl text-xs font-medium text-stone-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <RotateCcw className="h-4 w-4" /> 重新测试
+              <RotateCcw className="h-4 w-4" /> {uiText("重新测试")}
             </button>
             <button
               id="btn-quick-setup"
               onClick={handleStartQuiz}
               className="flex-1 py-3 px-4 bg-stone-900 hover:bg-stone-850 rounded-xl text-xs font-medium text-white transition flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              再来一组相同模式
+              {uiText("再来一组相同模式")}
             </button>
           </div>
         </div>

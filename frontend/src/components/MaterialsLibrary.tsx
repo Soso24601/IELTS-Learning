@@ -1,3 +1,4 @@
+import { uiText, useLanguage } from "../lib/language";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -55,6 +56,7 @@ export interface TextAnnotation {
 }
 
 interface MaterialsLibraryProps {
+  initialSceneFilter?: { domain: string; scene?: string } | null;
   vocabulary: IELTSWord[];
   onAddCustomWord: (wordData: Omit<IELTSWord, 'id' | 'custom'>) => void;
   initialMaterialId?: string | null;
@@ -64,6 +66,7 @@ interface MaterialsLibraryProps {
 }
 
 export default function MaterialsLibrary({ 
+  initialSceneFilter,
   vocabulary, 
   onAddCustomWord,
   initialMaterialId,
@@ -71,11 +74,13 @@ export default function MaterialsLibrary({
   initialWord,
   onClearInitialWord
 }: MaterialsLibraryProps) {
+  useLanguage();
   const [materialType, setMaterialType] = useState<CatalogType | 'all'>('all');
   const [materialSearch, setMaterialSearch] = useState('');
   const [selectedTopic, setSelectedTopic] = useState('');
-  const [selectedDomain, setSelectedDomain] = useState('');
-  const [selectedScene, setSelectedScene] = useState('');
+  const [learningCategory, setLearningCategory] = useState<WordCategory>('speaking');
+  const [selectedDomain, setSelectedDomain] = useState(initialSceneFilter?.domain || '');
+  const [selectedScene, setSelectedScene] = useState(initialSceneFilter?.scene || '');
   const [selectedPractice, setSelectedPractice] = useState('');
   const [selectedUse, setSelectedUse] = useState('');
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -252,7 +257,7 @@ export default function MaterialsLibrary({
     return materials.find(m => m.id === selectedMaterialId);
   }, [materials, selectedMaterialId]);
 
-  const activeCategory: WordCategory = activeMaterial?.category || (activeMaterial && catalogType(activeMaterial) === 'document' ? 'reading' : 'listening');
+  const activeCategory: WordCategory = learningCategory;
 
   useEffect(() => {
     if (!selectedMaterialId) return;
@@ -1160,7 +1165,7 @@ export default function MaterialsLibrary({
 
   // Render annotated text sections
   const renderAnnotatedText = (content: string, annotationsList: TextAnnotation[]) => {
-    if (!content) return <span className="text-stone-400 italic">暂无内容</span>;
+    if (!content) return <span className="text-stone-400 italic">{uiText("暂无内容")}</span>;
     if (!annotationsList || annotationsList.length === 0) {
       return <span>{content}</span>;
     }
@@ -1396,7 +1401,7 @@ export default function MaterialsLibrary({
               handleTranslateWordDirectly(cleanWord, contextSentence || text);
             }}
             className="hover:bg-amber-100 hover:text-amber-950 px-0.5 rounded cursor-pointer transition-colors duration-150 font-sans font-semibold text-stone-900 border-b border-dashed border-stone-300 hover:border-amber-400"
-            title="点击划词：AI智能语境翻译并收录"
+            title={uiText("点击划词：AI智能语境翻译并收录")}
           >
             {token}
           </span>
@@ -1474,7 +1479,7 @@ export default function MaterialsLibrary({
       example: quickExample || (activeMaterial?.content?.slice(0, 80) + '...'),
       exampleTranslation: quickTranslation || '源于学习材料。',
       category: activeCategory,
-      topic: activeFolder?.name || 'Academic',
+      topic: activeMaterial?.scene?.primary || activeFolder?.name || '日常表达',
       sourceMaterialId: activeMaterial?.id,
       sourceMaterialName: activeMaterial?.name,
       sourceSentence: selectionState?.contextSentence || selectionState?.text || activeMaterial?.content?.slice(0, 150) + '...',
@@ -1897,59 +1902,50 @@ export default function MaterialsLibrary({
   };
 
   return (
-    <div className="space-y-6" id="materials-library-container">
-      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-5">
-        <div><p className="mb-2 text-[10px] font-mono uppercase tracking-[.2em] text-amber-700">ENGLISH IN EVERYDAY LIFE</p><h2 className="text-2xl font-serif font-bold text-stone-900">在生活场景中积累表达</h2><p className="mt-2 text-xs leading-6 text-stone-500">从一次做饭、一段通勤、一次重要选择开始，找到你想说的英语。</p></div>
-        <span className="text-xs text-stone-500">{materials.length} 份材料</span>
+    <div className="ui-page-stack" id="materials-library-container">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div><p className="ui-kicker mb-2">{activeMaterial ? 'IN CONTEXT' : 'SCENE COLLECTION'}</p><h2 className="ui-page-title">{activeMaterial ? uiText('理解原句，留下想用的表达') : uiText('找到你想聊的生活场景')}</h2><p className="ui-description mt-2">{activeMaterial ? uiText('结合原文学习，划选词汇即可查询与收藏。') : uiText('先选场景，再选一份材料。视频、音频和文章都在这里。')}</p></div>
+        <span className="text-xs text-stone-500">{materials.length} {uiText("份材料")}</span>
       </header>
-      <section aria-label="生活场景浏览" className="space-y-4 rounded-2xl border border-stone-200 bg-[#fbf9f4] p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-serif text-lg font-bold text-stone-900">今天想聊什么？</h3><button type="button" onClick={() => { setSelectedDomain(''); setSelectedScene(''); setSelectedPractice(''); setSelectedUse(''); setSelectedTopic(''); setMaterialSearch(''); setMaterialType('all'); setSelectedMaterialId(null); }} className="text-xs text-amber-800 underline">查看全部材料 / 清除筛选</button></div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">{SCENE_DOMAINS.map((domain, index) => {
-          const count = materials.filter(material => matchesScene(material.scene, domain.name)).length;
-          return <button key={domain.name} type="button" aria-pressed={selectedDomain === domain.name} onClick={() => { setSelectedDomain(selectedDomain === domain.name ? '' : domain.name); setSelectedScene(''); setSelectedMaterialId(null); }} className={`flex min-w-0 flex-col items-start rounded-xl border p-3 text-left transition ${selectedDomain === domain.name ? 'border-amber-500 bg-amber-100 text-amber-950' : 'border-stone-200 bg-white text-stone-700 hover:border-amber-400'}`}><span className="mb-2 text-[10px] font-mono text-amber-700">{String(index + 1).padStart(2, '0')} · {count} 份</span><span className="text-sm font-semibold">{domain.name}</span></button>;
-        })}</div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-semibold text-stone-600">生活领域<select aria-label="按生活领域筛选" value={selectedDomain} onChange={event => { setSelectedDomain(event.target.value); setSelectedScene(''); setSelectedMaterialId(null); }} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">全部生活领域</option><option value="unclassified">待分类材料</option>{SCENE_DOMAINS.map(item => <option key={item.name}>{item.name}</option>)}</select></label>
-          <label className="text-xs font-semibold text-stone-600">具体场景<select aria-label="按具体场景筛选" value={selectedScene} disabled={!selectedDomain || selectedDomain === 'unclassified'} onChange={event => { setSelectedScene(event.target.value); setSelectedMaterialId(null); }} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm disabled:opacity-50"><option value="">全部具体场景</option>{scenesInDomain(selectedDomain).map(item => <option key={item}>{item}</option>)}</select></label>
+      {!activeMaterial && <section aria-label={uiText("生活场景浏览")} className="ui-filter-panel space-y-4">
+        <div className="flex items-center justify-between gap-3"><h3 className="ui-section-title">{uiText("选择一个场景")}</h3><button type="button" onClick={() => { setSelectedDomain(''); setSelectedScene(''); setSelectedPractice(''); setSelectedUse(''); setSelectedTopic(''); setMaterialSearch(''); setMaterialType('all'); }} className="shrink-0 text-xs text-stone-500 underline underline-offset-4">{uiText("清除筛选")}</button></div>
+        <div className="grid gap-3 md:grid-cols-[1fr_1fr_1.2fr]">
+          <label className="text-xs font-semibold text-stone-500">{uiText("生活领域")}<select aria-label={uiText("按生活领域筛选")} value={selectedDomain} onChange={event => { setSelectedDomain(event.target.value); setSelectedScene(''); }} className="mt-2 w-full rounded-xl border border-stone-200 bg-[#faf9f6] p-3 text-sm text-stone-800"><option value="">{uiText("全部生活领域")}</option><option value="unclassified">{uiText("其他材料（待分类）")}</option>{SCENE_DOMAINS.map(item => <option key={item.name} value={item.name}>{uiText(item.name)}</option>)}</select></label>
+          <label className="text-xs font-semibold text-stone-500">{uiText("具体场景")}<select aria-label={uiText("按具体场景筛选")} value={selectedScene} disabled={!selectedDomain || selectedDomain === 'unclassified'} onChange={event => setSelectedScene(event.target.value)} className="mt-2 w-full rounded-xl border border-stone-200 bg-[#faf9f6] p-3 text-sm text-stone-800 disabled:opacity-50"><option value="">{uiText("全部具体场景")}</option>{scenesInDomain(selectedDomain).map(item => <option key={item} value={item}>{uiText(item)}</option>)}</select></label>
+          <label className="text-xs font-semibold text-stone-500">{uiText("搜索材料")}<span className="mt-2 flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-3"><Search className="h-4 w-4 shrink-0 text-stone-400"/><input aria-label={uiText("搜索学习材料")} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)} placeholder={uiText("标题、场景或想学的表达")} className="min-w-0 w-full bg-transparent text-sm font-normal outline-none"/></span></label>
         </div>
-        <details><summary className="cursor-pointer text-xs font-semibold text-stone-600">按练习方向与表达用途筛选{(selectedPractice || selectedUse) && ' · 已选择'}</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <select aria-label="按练习方向筛选" value={selectedPractice} onChange={event => { setSelectedPractice(event.target.value); setSelectedMaterialId(null); }} className="w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">全部练习方向</option>{PRACTICE_DIRECTIONS.map(item => <option key={item}>{item}</option>)}</select>
-          <select aria-label="按表达用途筛选" value={selectedUse} onChange={event => { setSelectedUse(event.target.value); setSelectedMaterialId(null); }} className="w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">全部表达用途</option>{EXPRESSION_USES.map(item => <option key={item}>{item}</option>)}</select>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-3">
+          <div className="ui-filter-controls flex flex-wrap gap-1" role="group" aria-label={uiText("材料类型筛选")}>
+            {[{id:'all',label:'全部'}, ...MATERIAL_TYPES].map(tab => <button key={tab.id} aria-pressed={materialType === tab.id} onClick={() => setMaterialType(tab.id as CatalogType | 'all')} className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${materialType === tab.id ? 'bg-stone-900 text-white' : 'text-stone-500 hover:bg-stone-100'}`}>{uiText(tab.label)}<span className="ml-1.5 opacity-50">{filterCatalog(materials, tab.id as CatalogType | 'all', materialSearch, selectedTopic, sceneFilter).length}</span></button>)}
+          </div>
+          <span className="text-xs text-stone-400">{visibleMaterials.length} {uiText("份匹配材料")}</span>
+        </div>
+        <details><summary className="cursor-pointer text-xs text-stone-500">{uiText("更多筛选")}{(selectedPractice || selectedUse || selectedTopic) && uiText(' · 已选择')}</summary><div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <label className="text-xs text-stone-500">{uiText("练习方向")}<select aria-label={uiText("按练习方向筛选")} value={selectedPractice} onChange={event => setSelectedPractice(event.target.value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部练习方向")}</option>{PRACTICE_DIRECTIONS.map(item => <option key={item} value={item}>{uiText(item)}</option>)}</select></label>
+          <label className="text-xs text-stone-500">{uiText("表达用途")}<select aria-label={uiText("按表达用途筛选")} value={selectedUse} onChange={event => setSelectedUse(event.target.value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部表达用途")}</option>{EXPRESSION_USES.map(item => <option key={item} value={item}>{uiText(item)}</option>)}</select></label>
+          {!!topicOptions.length && <label className="text-xs text-stone-500">{uiText("话题")}<select aria-label={uiText("按话题筛选")} value={selectedTopic} onChange={event => setSelectedTopic(event.target.value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部话题")}</option>{topicOptions.map(topic => <option key={topic} value={topic}>{topic}</option>)}</select></label>}
         </div></details>
-      </section>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-1 rounded-xl bg-stone-100 p-1" role="group" aria-label="材料类型筛选">
-          {[{id:'all',label:'全部材料'}, ...MATERIAL_TYPES].map(tab => <button key={tab.id} aria-pressed={materialType === tab.id} onClick={() => { setMaterialType(tab.id as CatalogType | 'all'); setSelectedMaterialId(null); }} className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${materialType === tab.id ? 'bg-stone-900 text-white' : 'text-stone-500 hover:bg-white'}`}>{tab.label}<span className="ml-2 opacity-60">{filterCatalog(materials, tab.id as CatalogType | 'all').length}</span></button>)}
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <label className="flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600">话题
-            <select aria-label="按话题筛选" value={selectedTopic} onChange={event => { setSelectedTopic(event.target.value); setSelectedMaterialId(null); }} className="min-w-0 bg-transparent text-sm outline-none">
-              <option value="">全部话题</option>{topicOptions.map(topic => <option key={topic} value={topic}>{topic}</option>)}
-            </select>
-          </label>
-        <label className="flex min-w-0 items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2"><Search className="h-4 w-4 shrink-0 text-stone-400"/><input aria-label="搜索学习材料" value={materialSearch} onChange={event => { setMaterialSearch(event.target.value); setSelectedMaterialId(null); }} placeholder="搜索标题、场景或表达用途" className="min-w-0 w-full bg-transparent text-sm outline-none"/></label>
-        </div>
-      </div>
-      {!!recentMaterials.length && <section aria-label="最近学习" className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-stone-500">最近学习</span>{recentMaterials.slice(0,3).map(material => <button key={material.id} onClick={() => openMaterial(material)} className="max-w-56 truncate rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">{material.name}</button>)}</section>}
+      </section>}
+      {!activeMaterial && !!recentMaterials.length && <section aria-label={uiText("最近学习")} className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-stone-500">{uiText("最近学习")}</span>{recentMaterials.slice(0,3).map(material => <button key={material.id} onClick={() => openMaterial(material)} className="max-w-56 truncate rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">{material.name}</button>)}</section>}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <aside className={`${activeMaterial ? "hidden lg:block" : "block"} lg:col-span-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-xs`}>
-          <div className="mb-4 flex items-center justify-between"><h3 className="text-sm font-semibold">浏览材料</h3><span className="text-xs text-stone-400">{visibleMaterials.length} 份</span></div>
-          {catalogLoading ? <p role="status" className="py-8 text-center text-sm text-stone-500">正在读取材料…</p> : catalogError ? <div role="alert" className="rounded-xl bg-rose-50 p-4 text-sm text-rose-700"><p>{catalogError}</p><button onClick={() => setCatalogReload(value => value + 1)} className="mt-3 underline">重新读取</button></div> : !visibleMaterials.length ? <p className="py-8 text-center text-sm text-stone-500">{materials.length ? '没有匹配的材料，请调整筛选或搜索。' : '管理员尚未发布学习材料。'}</p> : <div className="max-h-[650px] space-y-3 overflow-auto">{visibleMaterials.map(material => {
+        <aside className={`${activeMaterial ? "hidden" : "block"} lg:col-span-12`}>
+          <div className="mb-4 flex items-center justify-between"><h3 className="text-sm font-semibold">{uiText("浏览材料")}</h3><span className="text-xs text-stone-400">{visibleMaterials.length} {uiText("份")}</span></div>
+          {catalogLoading ? <p role="status" className="py-8 text-center text-sm text-stone-500">{uiText("正在读取材料…")}</p> : catalogError ? <div role="alert" className="rounded-xl bg-rose-50 p-4 text-sm text-rose-700"><p>{catalogError}</p><button onClick={() => setCatalogReload(value => value + 1)} className="mt-3 underline">{uiText("重新读取")}</button></div> : !visibleMaterials.length ? <p className="rounded-2xl border border-dashed border-stone-300 bg-white py-12 text-center text-sm text-stone-500">{materials.length ? uiText('这个场景暂时没有匹配材料，试试其他场景或清除筛选。') : uiText('场景材料正在准备中，发布后会显示在这里。')}</p> : <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{visibleMaterials.map(material => {
             const type = catalogType(material);
             const Icon = type === 'video' ? Video : type === 'audio' ? Music : FileText;
             const duration = formatDuration(materialDuration(material));
             let thumbnail = '';
             if (type === 'video' && material.url) { try { const url = new URL(material.url); const id = url.hostname === 'youtu.be' ? url.pathname.slice(1) : /(^|\.)youtube\.com$/.test(url.hostname) ? url.searchParams.get('v') || url.pathname.match(/^\/(?:embed|shorts)\/([^/]+)/)?.[1] : ''; if (id && /^[\w-]{11}$/.test(id)) thumbnail = `https://i.ytimg.com/vi/${id}/mqdefault.jpg`; } catch {} }
-            return <button key={material.id} aria-pressed={selectedMaterialId === material.id} onClick={() => openMaterial(material)} className={`w-full overflow-hidden rounded-xl border text-left transition ${selectedMaterialId === material.id ? 'border-amber-400 bg-amber-50' : 'border-stone-200 hover:border-stone-400'}`}>
-              <div className="flex h-24 items-center justify-center overflow-hidden bg-stone-100">{thumbnail ? <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover"/> : <Icon className="h-7 w-7 text-stone-400"/>}</div>
-              <div className="p-3"><p className="text-sm font-semibold text-stone-900">{material.name}</p><p className="mt-2 text-[11px] text-stone-500">{MATERIAL_TYPES.find(item => item.id === type)?.label}{duration && ` · ${duration}`}{type !== 'document' && ` · ${material.videoSubtitles?.length ? '有字幕' : '暂无字幕'}`}</p><p className="mt-2 text-[11px] text-amber-800">{material.scene ? `${material.scene.domain} · ${material.scene.primary}` : '待分类'}</p>{!!material.scene?.practice.length && <p className="mt-1 text-[11px] text-stone-500">{material.scene.practice.join(' · ')}</p>}{!!material.tags?.length && <p className="mt-2 text-[11px] text-stone-500">{material.tags.join(' · ')}</p>}</div>
+            return <button key={material.id} aria-pressed={selectedMaterialId === material.id} onClick={() => openMaterial(material)} className="ui-material-card w-full overflow-hidden text-left transition">
+              <div className="flex h-36 items-center justify-center overflow-hidden bg-[#eaece3]">{thumbnail ? <img src={thumbnail} alt="" loading="lazy" className="h-full w-full object-cover"/> : <Icon className="h-8 w-8 text-[#7c8770]"/>}</div>
+              <div className="ui-material-caption"><p className="ui-material-name">{material.name}</p><p className="ui-material-meta mt-2">{uiText(MATERIAL_TYPES.find(item => item.id === type)?.label)}{duration && ` · ${duration}`}{type !== 'document' && ` · ${uiText(material.videoSubtitles?.length ? '有字幕' : '暂无字幕')}`}</p><p className="mt-2 text-[11px] text-amber-800">{material.scene ? `${uiText(material.scene.domain)} · ${uiText(material.scene.primary)}` : uiText('待分类')}</p>{!!material.scene?.practice.length && <p className="mt-1 text-[11px] text-stone-500">{material.scene.practice.map(uiText).join(' · ')}</p>}{!!material.tags?.length && <p className="ui-material-meta mt-2">{material.tags.map(uiText).join(' · ')}</p>}</div>
             </button>;
           })}</div>}
         </aside>
 
         {/* Right Side: Study workspace (Col Span: 8) */}
-        <div id="material-study-workspace" className="lg:col-span-8 flex flex-col space-y-6">
-          {activeMaterial && <button onClick={() => setSelectedMaterialId(null)} className="inline-flex items-center gap-2 self-start rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600 lg:hidden"><ArrowLeft className="h-3.5 w-3.5" />返回材料列表</button>}
+        <div id="material-study-workspace" className={`lg:col-span-12 flex-col space-y-6 ${activeMaterial ? 'flex' : 'hidden'}`}>
+          {activeMaterial && <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => setSelectedMaterialId(null)} className="inline-flex items-center gap-2 self-start rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600"><ArrowLeft className="h-3.5 w-3.5" />{uiText("返回场景材料")}</button><label className="flex items-center gap-2 text-xs text-stone-500">{uiText("词汇积累到")}<select aria-label={uiText("词汇积累方向")} value={learningCategory} onChange={event => setLearningCategory(event.target.value as WordCategory)} className="rounded-lg border border-stone-200 bg-white px-3 py-2 font-semibold text-stone-800"><option value="speaking">{uiText("口语表达")}</option><option value="listening">{uiText("听力词汇")}</option><option value="reading">{uiText("阅读词汇")}</option><option value="writing">{uiText("写作表达")}</option></select></label></div>}
           
           {!activeMaterial ? (
             /* Workspace Empty State */
@@ -1958,10 +1954,10 @@ export default function MaterialsLibrary({
                 <FileIcon className="h-8 w-8 text-stone-400" />
               </div>
               <h3 className="font-serif font-bold text-stone-950 text-base">
-                {materials.length ? '请先选择一份学习材料' : '管理员尚未发布学习材料'}
+                {materials.length ? uiText('请先选择一份学习材料') : uiText('管理员尚未发布学习材料')}
               </h3>
               <p className="text-xs text-stone-400 mt-2 max-w-sm leading-relaxed">
-                {materials.length ? '从左侧列表选择材料，即可播放视频、跟随字幕学习并查询词汇。' : '学习材料、视频链接和字幕由管理员统一整理并发布；发布后会显示在这里。'}
+                {materials.length ? uiText('从左侧列表选择材料，即可播放视频、跟随字幕学习并查询词汇。') : uiText('学习材料、视频链接和字幕由管理员统一整理并发布；发布后会显示在这里。')}
               </p>
             </div>
           ) : (
@@ -1980,36 +1976,36 @@ export default function MaterialsLibrary({
                       <h3 className="font-serif font-bold text-stone-950 text-base leading-tight">
                         {activeMaterial.name}
                       </h3>
-                      {activeMaterial.scene && <div className="mt-2 space-y-1 text-xs leading-5 text-amber-800"><p>{activeMaterial.scene.domain} / {activeMaterial.scene.primary}</p>{!!activeMaterial.scene.related.length && <p>也适用：{activeMaterial.scene.related.join(' · ')}</p>}<p>{[...activeMaterial.scene.practice, ...activeMaterial.scene.uses].join(' · ')}</p></div>}
+                      {activeMaterial.scene && <div className="mt-2 space-y-1 text-xs leading-5 text-amber-800"><p>{uiText(activeMaterial.scene.domain)} / {uiText(activeMaterial.scene.primary)}</p>{!!activeMaterial.scene.related.length && <p>{uiText("也适用：")}{activeMaterial.scene.related.map(uiText).join(' · ')}</p>}<p>{[...activeMaterial.scene.practice, ...activeMaterial.scene.uses].map(uiText).join(' · ')}</p></div>}
                       <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest mt-0.5 block">
-                        材料类型: {MATERIAL_TYPES.find(type => type.id === catalogType(activeMaterial))?.label}
+                        {uiText("材料类型:")} {uiText(MATERIAL_TYPES.find(type => type.id === catalogType(activeMaterial))?.label)}
                       </span>
                     </div>
                   </div>
 
                   {/* Actions buttons */}
-                  <div className="flex flex-wrap items-center gap-2">
+                  <details className="relative shrink-0"><summary className="cursor-pointer rounded-lg border border-stone-200 px-3 py-2 text-xs text-stone-500">{uiText("笔记导出与 AI 工具")}</summary><div className="absolute left-0 z-20 mt-2 flex w-64 max-w-[calc(100vw-4rem)] flex-wrap gap-2 rounded-xl border border-stone-200 bg-white p-3 shadow-lg sm:left-auto sm:right-0">
                     {/* Multi-format export group */}
                     <div className="flex items-center gap-1 border border-stone-200 rounded-xl p-0.5 bg-stone-50">
-                      <span className="text-[9px] font-mono font-bold text-stone-400 px-1.5 uppercase">导出笔记:</span>
+                      <span className="text-[9px] font-mono font-bold text-stone-400 px-1.5 uppercase">{uiText("导出笔记:")}</span>
                       <button
                         onClick={handleExportDocument}
                         className="px-2 py-1 bg-white hover:bg-stone-100 text-stone-850 rounded-lg text-[10px] font-bold shadow-xs border transition flex items-center gap-1"
-                        title="导出 Markdown (.md) 备考文档"
+                        title={uiText("导出 Markdown (.md) 备考文档")}
                       >
                         MD
                       </button>
                       <button
                         onClick={handleExportWord}
                         className="px-2 py-1 bg-white hover:bg-stone-100 text-stone-850 rounded-lg text-[10px] font-bold shadow-xs border transition flex items-center gap-1"
-                        title="导出 Microsoft Word (.doc) 彩色高亮版"
+                        title={uiText("导出 Microsoft Word (.doc) 彩色高亮版")}
                       >
                         Word
                       </button>
                       <button
                         onClick={handleExportPDF}
                         className="px-2 py-1 bg-white hover:bg-stone-100 text-stone-850 rounded-lg text-[10px] font-bold shadow-xs border transition flex items-center gap-1"
-                        title="一键生成 / 打印排版 PDF 笔记"
+                        title={uiText("一键生成 / 打印排版 PDF 笔记")}
                       >
                         PDF
                       </button>
@@ -2022,15 +2018,15 @@ export default function MaterialsLibrary({
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-400 hover:bg-amber-300 text-stone-950 rounded-xl text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-50"
                     >
                       <Sparkles className="h-3.5 w-3.5" />
-                      {isSummarizing ? 'AI 总结中...' : 'AI 提炼考点'}
+                      {isSummarizing ? uiText('AI 总结中...') : uiText('AI 提炼考点')}
                     </button>
-                  </div>
+                  </div></details>
                 </div>
 
                 {/* Subtitle / Web URL Link */}
                 {activeMaterial.url && (
                   <p className="text-xs text-stone-500 font-mono truncate">
-                    原材料: <a href={activeMaterial.url.startsWith('/api/media/') ? apiUrl(activeMaterial.url) : activeMaterial.url} target="_blank" rel="noreferrer" className="text-amber-600 underline hover:text-amber-500">{activeMaterial.url.startsWith('/api/media/') ? '打开已发布的媒体文件' : activeMaterial.url}</a>
+                    {uiText("原材料:")} <a href={activeMaterial.url.startsWith('/api/media/') ? apiUrl(activeMaterial.url) : activeMaterial.url} target="_blank" rel="noreferrer" className="text-amber-600 underline hover:text-amber-500">{activeMaterial.url.startsWith('/api/media/') ? uiText('打开已发布的媒体文件') : activeMaterial.url}</a>
                   </p>
                 )}
               </div>
@@ -2115,42 +2111,42 @@ export default function MaterialsLibrary({
                                       }`}
                                       title={isSimulatedPlaying ? '暂停字幕随时间滚动同步' : '开启字幕随时间滚动同步'}
                                     >
-                                      {isSimulatedPlaying ? '⏸️ 暂停时间同步' : '▶️ 启动时间同步'}
+                                      {isSimulatedPlaying ? uiText('⏸️ 暂停时间同步') : uiText('▶️ 启动时间同步')}
                                     </button>
 
                                     <span className="text-[10px] text-stone-300 font-mono pl-1.5 border-l border-stone-800">
-                                      滚动进度: <b className="text-amber-400">{videoCurrentTime.toFixed(1)}</b> / {maxSubtitleTime.toFixed(1)} 秒
+                                      {uiText("滚动进度:")} <b className="text-amber-400">{videoCurrentTime.toFixed(1)}</b> / {maxSubtitleTime.toFixed(1)} {uiText("秒")}
                                     </span>
                                   </div>
 
                                   {/* Nudge fine-tuning buttons */}
                                   <div className="flex items-center gap-1">
-                                    <span className="text-[9px] font-mono text-stone-500 uppercase mr-1.5 select-none">字幕对齐微调:</span>
+                                    <span className="text-[9px] font-mono text-stone-500 uppercase mr-1.5 select-none">{uiText("字幕对齐微调:")}</span>
                                     <button
                                       onClick={() => nudgeTime(-5)}
                                       className="px-2 py-0.5 bg-stone-800 hover:bg-stone-700 active:bg-stone-600 rounded text-[10px] font-mono cursor-pointer"
-                                      title="后退5秒"
+                                      title={uiText("后退5秒")}
                                     >
                                       -5s
                                     </button>
                                     <button
                                       onClick={() => nudgeTime(-1)}
                                       className="px-2 py-0.5 bg-stone-800 hover:bg-stone-700 active:bg-stone-600 rounded text-[10px] font-mono cursor-pointer"
-                                      title="后退1秒"
+                                      title={uiText("后退1秒")}
                                     >
                                       -1s
                                     </button>
                                     <button
                                       onClick={() => nudgeTime(1)}
                                       className="px-2 py-0.5 bg-stone-800 hover:bg-stone-700 active:bg-stone-600 rounded text-[10px] font-mono cursor-pointer"
-                                      title="前进1秒"
+                                      title={uiText("前进1秒")}
                                     >
                                       +1s
                                     </button>
                                     <button
                                       onClick={() => nudgeTime(5)}
                                       className="px-2 py-0.5 bg-stone-800 hover:bg-stone-700 active:bg-stone-600 rounded text-[10px] font-mono cursor-pointer"
-                                      title="前进5秒"
+                                      title={uiText("前进5秒")}
                                     >
                                       +5s
                                     </button>
@@ -2161,12 +2157,12 @@ export default function MaterialsLibrary({
                           </div>
                           {/(youtube\.com|youtu\.be)/i.test(activeMaterial.url || '') && (
                             <p role="status" className={`text-xs px-3 py-2 rounded-lg ${youtubeSyncStatus === 'ready' ? 'bg-emerald-50 text-emerald-800' : youtubeSyncStatus === 'unavailable' ? 'bg-amber-50 text-amber-900' : 'bg-stone-100 text-stone-600'}`}>
-                              {youtubeSyncStatus === 'ready' ? '字幕已连接视频时间轴；播放或拖动进度时，当前句会高亮。' : youtubeSyncStatus === 'unavailable' ? '未能连接 YouTube 播放器时间轴，暂时无法自动高亮。请刷新页面并确认视频可播放。' : '正在连接 YouTube 播放器时间轴…'}
+                              {youtubeSyncStatus === 'ready' ? uiText('字幕已连接视频时间轴；播放或拖动进度时，当前句会高亮。') : youtubeSyncStatus === 'unavailable' ? uiText('未能连接 YouTube 播放器时间轴，暂时无法自动高亮。请刷新页面并确认视频可播放。') : uiText('正在连接 YouTube 播放器时间轴…')}
                             </p>
                           )}
 
                           {activeMaterial.transcriptionReport && <details className="text-xs text-stone-600 bg-stone-50 rounded-lg p-3">
-                            <summary className="cursor-pointer font-semibold">完整字幕处理耗时</summary>
+                            <summary className="cursor-pointer font-semibold">{uiText("完整字幕处理耗时")}</summary>
                             <p className="mt-2 leading-relaxed">{activeMaterial.transcriptionReport}</p>
                           </details>}
 
@@ -2177,8 +2173,8 @@ export default function MaterialsLibrary({
                               <span className="text-xs font-serif font-bold text-stone-900 flex items-center gap-1.5">
                                 <Sparkles className="h-3.5 w-3.5 text-amber-500 animate-pulse" />
                                 {speakingReadingMode === 'continuous' 
-                                  ? '📄 材料完整英文原文 (点击单词可即时译查并收录)'
-                                  : '📖 智能中英双语对照字幕 (点击单词可即时译查并收录)'}
+                                  ? uiText('📄 材料完整英文原文 (点击单词可即时译查并收录)')
+                                  : uiText('📖 智能中英双语对照字幕 (点击单词可即时译查并收录)')}
                               </span>
                               
                               <div className="flex items-center gap-2 flex-wrap">
@@ -2193,7 +2189,7 @@ export default function MaterialsLibrary({
                                     }`}
                                     title={isAutoSyncSubtitles ? "自动跟踪模式：字幕跟随视频进度自动高亮并滚动定位" : "手动切换模式：点击任意字幕卡片可直接进行精读高亮，不会打断或跳转视频播放进度"}
                                   >
-                                    {isAutoSyncSubtitles ? '🔄 自动定位：开' : '📍 自由滚动：手动'}
+                                    {isAutoSyncSubtitles ? uiText('🔄 自动定位：开') : uiText('📍 自由滚动：手动')}
                                   </button>
                                 )}
 
@@ -2208,7 +2204,7 @@ export default function MaterialsLibrary({
                               {speakingReadingMode === 'continuous' ? (
                                 <div className="space-y-4 py-2 px-1 focus:outline-hidden selection:bg-amber-200 cursor-text leading-relaxed text-sm sm:text-base text-stone-800">
                                   {paragraphBlocks.length === 0 ? (
-                                    <span className="text-stone-400 italic">暂无内容</span>
+                                    <span className="text-stone-400 italic">{uiText("暂无内容")}</span>
                                   ) : (
                                     paragraphBlocks.map((block, idx) => (
                                       <p 
@@ -2217,7 +2213,7 @@ export default function MaterialsLibrary({
                                           e.stopPropagation();
                                           handleParagraphTextSelection(block.start, e.currentTarget);
                                         }}
-                                        className="text-stone-900 text-sm sm:text-base leading-relaxed focus:outline-hidden selection:bg-amber-200 cursor-text mb-4"
+                                    className="ui-reading-text text-stone-900 selection:bg-amber-200 cursor-text mb-4"
                                       >
                                         {renderAnnotatedText(block.text, getParagraphAnnotations(block.start, block.end))}
                                       </p>
@@ -2232,9 +2228,9 @@ export default function MaterialsLibrary({
                                     </div>
                                   </div>
                                   <div className="space-y-1 max-w-md mx-auto">
-                                    <p className="text-xs font-serif font-bold text-stone-800">当前材料暂无双语字幕</p>
+                                    <p className="text-xs font-serif font-bold text-stone-800">{uiText("当前材料暂无双语字幕")}</p>
                                     <p className="text-[11px] text-stone-500 leading-relaxed">
-                                      管理员尚未发布这份材料的字幕。字幕发布后会显示在这里，并按播放进度自动高亮。
+                                      {uiText("管理员尚未发布这份材料的字幕。字幕发布后会显示在这里，并按播放进度自动高亮。")}
                                     </p>
                                   </div>
                                 </div>
@@ -2272,9 +2268,9 @@ export default function MaterialsLibrary({
                                               window.speechSynthesis.speak(utterance);
                                             }}
                                             className="p-1 hover:bg-stone-200 rounded text-[10px]"
-                                            title="🔊 单句朗读"
+                                            title={uiText("🔊 单句朗读")}
                                           >
-                                            🔊 朗读
+                                            {uiText("🔊 朗读")}
                                           </button>
                                           <button
                                             onClick={(e) => {
@@ -2289,9 +2285,9 @@ export default function MaterialsLibrary({
                                               }
                                             }}
                                             className={`p-1 rounded text-[10px] font-bold ${isDictatingThis ? 'bg-amber-500 text-stone-950' : 'hover:bg-stone-200'}`}
-                                            title="✍️ 精听默写"
+                                            title={uiText("✍️ 精听默写")}
                                           >
-                                            ✍️ 听写
+                                            {uiText("✍️ 听写")}
                                           </button>
                                         </div>
                                       </div>
@@ -2313,16 +2309,16 @@ export default function MaterialsLibrary({
                                           onClick={(e) => e.stopPropagation()}
                                         >
                                           <div className="flex items-center justify-between">
-                                            <span className="text-[10px] font-bold text-stone-700">✍️ 视频精听拼写 (IELTS Sentence Dictation):</span>
+                                            <span className="text-[10px] font-bold text-stone-700">{uiText("✍️ 视频精听拼写 (IELTS Sentence Dictation):")}</span>
                                             <button
                                               onClick={() => handleSubtitleClick(sub.start, sub.id, true)}
                                               className="text-[9px] text-amber-600 hover:underline"
                                             >
-                                              🔊 重新听音
+                                              {uiText("🔊 重新听音")}
                                             </button>
                                           </div>
                                           <textarea
-                                            placeholder="写下你听到的英文句子..."
+                                            placeholder={uiText("写下你听到的英文句子...")}
                                             rows={1.5}
                                             value={localDictationInput}
                                             onChange={(e) => setLocalDictationInput(e.target.value)}
@@ -2333,23 +2329,23 @@ export default function MaterialsLibrary({
                                               onClick={() => handleCheckLocalDictation(sub.text)}
                                               className="px-3 py-1 bg-stone-900 text-white rounded-md text-[10.5px] font-bold"
                                             >
-                                              提交校验
+                                              {uiText("提交校验")}
                                             </button>
                                             <button
                                               onClick={() => setLocalDictationId(null)}
                                               className="px-3 py-1 bg-stone-100 text-stone-600 rounded-md text-[10.5px]"
                                             >
-                                              取消
+                                              {uiText("取消")}
                                             </button>
                                           </div>
 
                                           {localDictationChecked && localDictationScore !== null && (
                                             <div className="pt-2 border-t border-dashed border-stone-150">
                                               <span className="text-[10.5px] font-bold">
-                                                拼写正确率: <span className={localDictationScore >= 90 ? 'text-green-600 font-mono text-sm' : 'text-amber-600 font-mono text-sm'}>{localDictationScore}%</span>
+                                                {uiText("拼写正确率:")} <span className={localDictationScore >= 90 ? 'text-green-600 font-mono text-sm' : 'text-amber-600 font-mono text-sm'}>{localDictationScore}%</span>
                                               </span>
                                               <p className="text-[9.5px] text-stone-400 mt-1">
-                                                原句: <b className="font-mono text-stone-600 font-medium">"{sub.text}"</b>
+                                                {uiText("原句:")} <b className="font-mono text-stone-600 font-medium">"{sub.text}"</b>
                                               </p>
                                             </div>
                                           )}
@@ -2365,7 +2361,7 @@ export default function MaterialsLibrary({
 
                           {speakingReadingMode === 'bilingual' && activeMaterial.content?.trim() && (
                             <details open className="mt-3 rounded-xl border border-stone-200 bg-stone-50 px-4 py-3">
-                              <summary className="cursor-pointer text-xs font-bold text-stone-700">📄 完整英文原文（已去除翻译和音乐标注）</summary>
+                              <summary className="cursor-pointer text-xs font-bold text-stone-700">{uiText("📄 完整英文原文（已去除翻译和音乐标注）")}</summary>
                               <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-stone-800">{activeMaterial.content}</p>
                             </details>
                           )}
@@ -2387,7 +2383,7 @@ export default function MaterialsLibrary({
                           <div className="flex flex-wrap items-center justify-between gap-2 bg-stone-50 p-2.5 rounded-xl border border-stone-200 mb-4 text-xs">
                             <div className="flex items-center gap-1.5">
                               <Volume2 className="h-4 w-4 text-amber-500 shrink-0" />
-                              <span className="font-semibold text-stone-800">AI 原文朗读 / 跟读模式</span>
+                              <span className="font-semibold text-stone-800">{uiText("AI 原文朗读 / 跟读模式")}</span>
                             </div>
                             
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -2396,9 +2392,9 @@ export default function MaterialsLibrary({
                                 value={selectedTtsVoice}
                                 onChange={(e) => setSelectedTtsVoice(e.target.value)}
                                 className="p-1 bg-white border border-stone-200 rounded text-[10px] text-stone-600 focus:outline-hidden"
-                                title="选择朗读发音人"
+                                title={uiText("选择朗读发音人")}
                               >
-                                <option value="">默认系统发音</option>
+                                <option value="">{uiText("默认系统发音")}</option>
                                 {availableVoices.map(v => (
                                   <option key={v.name} value={v.name}>
                                     {v.name.slice(0, 15)} ({v.lang})
@@ -2411,14 +2407,14 @@ export default function MaterialsLibrary({
                                 value={playbackSpeed}
                                 onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
                                 className="p-1 bg-white border border-stone-200 rounded text-[10px] text-stone-600 focus:outline-hidden"
-                                title="设置阅读语速"
+                                title={uiText("设置阅读语速")}
                               >
-                                <option value="0.75">0.75x 慢速</option>
-                                <option value="0.9">0.9x 略慢</option>
-                                <option value="1.0">1.0x 标准</option>
-                                <option value="1.15">1.15x 略快</option>
-                                <option value="1.3">1.3x 快速</option>
-                                <option value="1.5">1.5x 挑战</option>
+                                <option value="0.75">{uiText("0.75x 慢速")}</option>
+                                <option value="0.9">{uiText("0.9x 略慢")}</option>
+                                <option value="1.0">{uiText("1.0x 标准")}</option>
+                                <option value="1.15">{uiText("1.15x 略快")}</option>
+                                <option value="1.3">{uiText("1.3x 快速")}</option>
+                                <option value="1.5">{uiText("1.5x 挑战")}</option>
                               </select>
 
                               {/* Play/Pause/Stop triggers */}
@@ -2429,7 +2425,7 @@ export default function MaterialsLibrary({
                                     className="px-2.5 py-1 bg-stone-950 text-white rounded hover:bg-stone-850 font-bold text-[10px] transition flex items-center gap-0.5 cursor-pointer shadow-xs"
                                   >
                                     <Play className="h-2.5 w-2.5 fill-white" />
-                                    朗读
+                                    {uiText("朗读")}
                                   </button>
                                 ) : (
                                   <button
@@ -2437,7 +2433,7 @@ export default function MaterialsLibrary({
                                     className="px-2.5 py-1 bg-white border border-stone-200 text-stone-800 rounded hover:bg-stone-50 font-bold text-[10px] transition flex items-center gap-0.5 cursor-pointer shadow-xs"
                                   >
                                     <Pause className="h-2.5 w-2.5 text-stone-700" />
-                                    暂停
+                                    {uiText("暂停")}
                                   </button>
                                 )}
 
@@ -2446,7 +2442,7 @@ export default function MaterialsLibrary({
                                     onClick={handleStopTts}
                                     className="px-2.5 py-1 bg-rose-50 text-rose-600 border border-rose-200 rounded hover:bg-rose-100 font-bold text-[10px] transition cursor-pointer"
                                   >
-                                    停止
+                                    {uiText("停止")}
                                   </button>
                                 )}
                               </div>
@@ -2458,7 +2454,7 @@ export default function MaterialsLibrary({
                         {activeMaterial.content && (
                           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 bg-stone-50 border border-stone-200/60 p-2.5 rounded-xl mb-4 text-xs">
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-semibold text-stone-500 mr-1 shrink-0">阅读显示模式:</span>
+                              <span className="font-semibold text-stone-500 mr-1 shrink-0">{uiText("阅读显示模式:")}</span>
                               <div className="flex bg-stone-200/60 p-0.5 rounded-lg border border-stone-200 flex-wrap sm:flex-nowrap">
                                 <button
                                   onClick={() => {
@@ -2471,7 +2467,7 @@ export default function MaterialsLibrary({
                                       : 'text-stone-500 hover:text-stone-800'
                                   }`}
                                 >
-                                  📄 整段原文(不翻译)
+                                  {uiText("📄 整段原文(不翻译)")}
                                 </button>
                                 <button
                                   onClick={async () => {
@@ -2516,11 +2512,11 @@ export default function MaterialsLibrary({
                                   {isTranslatingByLine && readingMode !== 'sentence' ? (
                                     <>
                                       <span className="animate-spin rounded-full h-3 w-3 border-2 border-stone-900 border-t-transparent"></span>
-                                      <span>AI 断句翻译中...</span>
+                                      <span>{uiText("AI 断句翻译中...")}</span>
                                     </>
                                   ) : (
                                     <>
-                                      <span>📖 整段双语对照</span>
+                                      <span>{uiText("📖 整段双语对照")}</span>
                                     </>
                                   )}
                                 </button>
@@ -2567,11 +2563,11 @@ export default function MaterialsLibrary({
                                   {isTranslatingByLine && readingMode === 'sentence' ? (
                                     <>
                                       <span className="animate-spin rounded-full h-3 w-3 border-2 border-stone-900 border-t-transparent"></span>
-                                      <span>AI 翻译对照中...</span>
+                                      <span>{uiText("AI 翻译对照中...")}</span>
                                     </>
                                   ) : (
                                     <>
-                                      <span>📑 逐行单句对照</span>
+                                      <span>{uiText("📑 逐行单句对照")}</span>
                                     </>
                                   )}
                                 </button>
@@ -2580,11 +2576,11 @@ export default function MaterialsLibrary({
 
                             <div className="text-[10px] text-stone-400">
                               {readingMode === 'sentence' ? (
-                                <span className="text-amber-700 font-medium">💡 选中单句中任何词句，均可划线高亮或查看 AI 考点释义</span>
+                                <span className="text-amber-700 font-medium">{uiText("💡 选中单句中任何词句，均可划线高亮或查看 AI 考点释义")}</span>
                               ) : readingMode === 'paragraph' ? (
-                                <span className="text-amber-700 font-medium">💡 完整展现学术篇章段落结构！双语整段完美对照，选中任何词句均可划线高亮</span>
+                                <span className="text-amber-700 font-medium">{uiText("💡 完整展现学术篇章段落结构！双语整段完美对照，选中任何词句均可划线高亮")}</span>
                               ) : (
-                                <span className="text-stone-500">💡 选中原文任何词句，可随时划线高亮或让 AI 深入释义</span>
+                                <span className="text-stone-500">{uiText("💡 选中原文任何词句，可随时划线高亮或让 AI 深入释义")}</span>
                               )}
                             </div>
                           </div>
@@ -2600,22 +2596,22 @@ export default function MaterialsLibrary({
                             <div className="flex flex-col items-center justify-center py-24 text-center space-y-3.5">
                               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600"></div>
                               <div className="space-y-1">
-                                <p className="text-xs font-bold text-stone-700">AI 正在整理学习内容...</p>
-                                <p className="text-[11px] text-stone-400">整理完成后会在这里显示材料内容。</p>
+                                <p className="text-xs font-bold text-stone-700">{uiText("AI 正在整理学习内容...")}</p>
+                                <p className="text-[11px] text-stone-400">{uiText("整理完成后会在这里显示材料内容。")}</p>
                               </div>
                             </div>
                           ) : isTranslatingByLine ? (
                             <div className="flex flex-col items-center justify-center py-24 text-center space-y-3.5">
                               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600"></div>
                               <div className="space-y-1">
-                                <p className="text-xs font-bold text-stone-700">AI 正在进行智能断句与对照翻译中...</p>
-                                <p className="text-[11px] text-stone-400">我们将对篇章按语意拆分，并生成精准中英双语逐句对照，请耐心稍候</p>
+                                <p className="text-xs font-bold text-stone-700">{uiText("AI 正在进行智能断句与对照翻译中...")}</p>
+                                <p className="text-[11px] text-stone-400">{uiText("我们将对篇章按语意拆分，并生成精准中英双语逐句对照，请耐心稍候")}</p>
                               </div>
                             </div>
                           ) : activeMaterial.type === 'audio' ? (
                             <div className="flex flex-col items-center justify-center py-16 px-6 bg-stone-50 border border-dashed border-stone-200 rounded-2xl text-center space-y-2">
-                              <h4 className="text-xs font-bold text-stone-800">暂无已发布的音频文字稿</h4>
-                              <p className="text-[11px] text-stone-500">学习文字稿由管理员整理后发布。</p>
+                              <h4 className="text-xs font-bold text-stone-800">{uiText("暂无已发布的音频文字稿")}</h4>
+                              <p className="text-[11px] text-stone-500">{uiText("学习文字稿由管理员整理后发布。")}</p>
                             </div>
                           ) : activeMaterial.content ? (
                             readingMode === 'sentence' && lineTranslationsMap[activeMaterial.id] ? (
@@ -2654,7 +2650,7 @@ export default function MaterialsLibrary({
                                     <div key={idx} className="p-4 bg-stone-50/40 border border-stone-200/40 rounded-2xl space-y-2.5 hover:bg-amber-50/10 transition-all duration-200 group">
                                       <div className="flex items-start gap-2">
                                         <span className="text-[10px] font-mono text-stone-400 select-none bg-stone-200/40 px-1.5 py-0.5 rounded shrink-0">
-                                          段落 {idx + 1}
+                                          {uiText("段落")} {idx + 1}
                                         </span>
                                         <p 
                                           onMouseUp={(e) => {
@@ -2688,7 +2684,7 @@ export default function MaterialsLibrary({
                                           ? 'bg-amber-100 text-amber-950 font-medium border-l-2 border-amber-500 pl-2 pr-1 shadow-xs' 
                                           : 'text-stone-850 hover:bg-stone-50'
                                       }`}
-                                      title="点击从此句开始朗读"
+                                      title={uiText("点击从此句开始朗读")}
                                     >
                                       {sentence}{' '}
                                     </span>
@@ -2704,7 +2700,7 @@ export default function MaterialsLibrary({
                                       e.stopPropagation();
                                       handleParagraphTextSelection(block.start, e.currentTarget);
                                     }}
-                                    className="text-stone-900 text-sm sm:text-base leading-relaxed focus:outline-hidden selection:bg-amber-200 cursor-text mb-4"
+                                    className="ui-reading-text text-stone-900 selection:bg-amber-200 cursor-text mb-4"
                                   >
                                     {renderAnnotatedText(block.text, getParagraphAnnotations(block.start, block.end))}
                                   </p>
@@ -2712,7 +2708,7 @@ export default function MaterialsLibrary({
                               </div>
                             )
                           ) : (
-                            <p className="text-stone-400 italic py-10 text-center">管理员尚未发布这份材料的学习文本。</p>
+                            <p className="text-stone-400 italic py-10 text-center">{uiText("管理员尚未发布这份材料的学习文本。")}</p>
                           )}
                         </div>
 
@@ -2724,7 +2720,7 @@ export default function MaterialsLibrary({
                 </div>
 
                 {/* Right Column: Study Notes, AI Summary and Quick Word Add (Col: 4) */}
-                <div className="md:col-span-4 space-y-4">
+                <div className="ui-study-tools md:col-span-4 space-y-2">
                   
                   {/* DYNAMIC ACTIVE SELECTION TOOL PANEL */}
                   {selectionState && (
@@ -2732,13 +2728,13 @@ export default function MaterialsLibrary({
                       <div className="flex items-center justify-between border-b border-amber-200/50 pb-2">
                         <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
                           <Sparkles className="h-3.5 w-3.5 text-amber-600 animate-pulse" />
-                          已选中文本 (Selected Text)
+                          {uiText("已选中文本 (Selected Text)")}
                         </span>
                         <button 
                           onClick={() => setSelectionState(null)} 
                           className="text-stone-400 hover:text-stone-600 text-xs cursor-pointer font-bold"
                         >
-                          ✕ 取消
+                          {uiText("✕ 取消")}
                         </button>
                       </div>
                       <div className="text-xs text-stone-700 bg-white/90 p-2.5 rounded-lg border border-amber-200/40 italic font-mono max-h-24 overflow-y-auto leading-relaxed">
@@ -2747,56 +2743,56 @@ export default function MaterialsLibrary({
 
                       {/* Highlight color block selectors */}
                       <div className="space-y-1.5">
-                        <span className="text-[10px] font-mono text-stone-400 block font-semibold">1. 划线/高亮类型:</span>
+                        <span className="text-[10px] font-mono text-stone-400 block font-semibold">{uiText("1. 划线/高亮类型:")}</span>
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <button
                             onClick={() => handleAddAnnotation('highlight', 'yellow')}
                             className="px-2 py-1 bg-yellow-50 hover:bg-yellow-100 border border-yellow-300 text-[10px] rounded-lg font-bold flex items-center gap-1 cursor-pointer transition"
-                            title="高亮黄"
+                            title={uiText("高亮黄")}
                           >
-                            🟡 黄高亮
+                            {uiText("🟡 黄高亮")}
                           </button>
                           <button
                             onClick={() => handleAddAnnotation('highlight', 'green')}
                             className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-[10px] rounded-lg font-bold flex items-center gap-1 cursor-pointer transition"
-                            title="高亮绿"
+                            title={uiText("高亮绿")}
                           >
-                            🟢 绿高亮
+                            {uiText("🟢 绿高亮")}
                           </button>
                           <button
                             onClick={() => handleAddAnnotation('highlight', 'blue')}
                             className="px-2 py-1 bg-sky-50 hover:bg-sky-100 border border-sky-300 text-[10px] rounded-lg font-bold flex items-center gap-1 cursor-pointer transition"
-                            title="高亮蓝"
+                            title={uiText("高亮蓝")}
                           >
-                            🔵 蓝高亮
+                            {uiText("🔵 蓝高亮")}
                           </button>
                           <button
                             onClick={() => handleAddAnnotation('highlight', 'pink')}
                             className="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-300 text-[10px] rounded-lg font-bold flex items-center gap-1 cursor-pointer transition"
-                            title="高亮粉"
+                            title={uiText("高亮粉")}
                           >
-                            🔴 粉高亮
+                            {uiText("🔴 粉高亮")}
                           </button>
                           <button
                             onClick={() => handleAddAnnotation('underline')}
                             className="px-2 py-1 bg-white hover:bg-stone-50 border border-stone-300 text-[10px] rounded-lg font-bold flex items-center gap-1 cursor-pointer transition"
-                            title="波浪下划线"
+                            title={uiText("波浪下划线")}
                           >
-                            ✍️ 划下划线
+                            {uiText("✍️ 划下划线")}
                           </button>
                         </div>
                       </div>
 
                       {/* AI Translation button */}
                       <div className="space-y-1.5 pt-1">
-                        <span className="text-[10px] font-mono text-stone-400 block font-semibold">2. 智能雅思学术语境翻译:</span>
+                        <span className="text-[10px] font-mono text-stone-400 block font-semibold">{uiText("2. 智能雅思学术语境翻译:")}</span>
                         <button
                           onClick={handleTranslateSelection}
                           disabled={isTranslating}
                           className="w-full py-2 bg-amber-400 hover:bg-amber-300 text-stone-950 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-55"
                         >
                           <Sparkles className="h-3.5 w-3.5" />
-                          {isTranslating ? 'AI 正在深度释义其多维语境...' : 'AI 智能语境学术翻译'}
+                          {isTranslating ? uiText('AI 正在深度释义其多维语境...') : uiText('AI 智能语境学术翻译')}
                         </button>
                       </div>
 
@@ -2805,7 +2801,7 @@ export default function MaterialsLibrary({
                         <div className="bg-white border border-amber-200 rounded-xl p-3 text-xs space-y-2.5 animate-fade-in shadow-xs">
                           <div className="flex items-center justify-between border-b border-stone-100 pb-1.5">
                             <span className="font-bold text-stone-900 text-[11px] flex items-center gap-1">
-                              📖 AI 语境释义与考点
+                              {uiText("📖 AI 语境释义与考点")}
                             </span>
                             {translationResult.phonetic && (
                               <span className="text-[9.5px] font-mono text-stone-500 bg-stone-100 px-1 rounded">
@@ -2818,53 +2814,53 @@ export default function MaterialsLibrary({
                           {translationResult.isCorrected && (
                             <div className="bg-amber-50 border border-amber-200 text-amber-900 p-2.5 rounded-lg flex flex-col gap-1">
                               <span className="font-bold text-[10.5px] flex items-center gap-1">
-                                ⚠️ 可能的拼写错误
+                                {uiText("⚠️ 可能的拼写错误")}
                               </span>
                               <p className="text-[10px] leading-normal text-amber-850">
-                                {translationResult.correctionExplanation || `检测到输入可能存在拼写错误。已结合上下文给出标准表达：`}
+                                {translationResult.correctionExplanation || uiText(`检测到输入可能存在拼写错误。已结合上下文给出标准表达：`)}
                               </p>
                               <div className="text-[9.5px] text-stone-600 font-mono mt-0.5">
-                                划选原文: <span className="line-through text-red-500 font-sans">"{selectionState?.text}"</span> ➔ 修正后: <span className="font-bold text-emerald-700 font-sans">"{translationResult.word}"</span>
+                                {uiText("划选原文:")} <span className="line-through text-red-500 font-sans">"{selectionState?.text}"</span> {uiText("➔ 修正后:")} <span className="font-bold text-emerald-700 font-sans">"{translationResult.word}"</span>
                               </div>
                             </div>
                           )}
                           
                           <div>
-                            <span className="text-[9px] font-mono text-stone-400 uppercase tracking-wider block font-bold">释义 (Translation):</span>
+                            <span className="text-[9px] font-mono text-stone-400 uppercase tracking-wider block font-bold">{uiText("释义 (Translation):")}</span>
                             <p className="text-stone-850 font-semibold text-[11px]">{translationResult.translation}</p>
                           </div>
 
                           {translationResult.englishDefinition && (
                             <div>
-                              <span className="text-[9px] font-mono text-stone-400 uppercase tracking-wider block font-bold">英文定义 (English Definition):</span>
+                              <span className="text-[9px] font-mono text-stone-400 uppercase tracking-wider block font-bold">{uiText("英文定义 (English Definition):")}</span>
                               <p className="text-stone-800 font-medium text-[11px] font-mono">{translationResult.englishDefinition}</p>
                             </div>
                           )}
                           
                           {translationResult.contextualExplanation && (
                             <div>
-                              <span className="text-[9px] font-mono text-stone-400 uppercase tracking-wider block font-bold">学术语境与指代分析 (Contextual Match):</span>
+                              <span className="text-[9px] font-mono text-stone-400 uppercase tracking-wider block font-bold">{uiText("学术语境与指代分析 (Contextual Match):")}</span>
                               <p className="text-stone-600 leading-normal text-[10.5px]">{translationResult.contextualExplanation}</p>
                             </div>
                           )}
                           
                           {translationResult.ieltsTips && (
                             <div className="bg-amber-50/60 p-2 rounded-lg border border-amber-200/20">
-                              <span className="text-[9px] font-mono text-amber-800 font-bold block">💡 雅思备考高分干货:</span>
+                              <span className="text-[9px] font-mono text-amber-800 font-bold block">{uiText("💡 雅思备考高分干货:")}</span>
                               <p className="text-stone-600 leading-relaxed text-[10.5px] whitespace-pre-line">{translationResult.ieltsTips}</p>
                             </div>
                           )}
                           
                           {translationResult.example && (
                             <div className="border-t border-dashed pt-2">
-                              <span className="text-[9px] font-mono text-stone-400 block font-bold">学术原创例句 (IELTS Academic Sample):</span>
+                              <span className="text-[9px] font-mono text-stone-400 block font-bold">{uiText("学术原创例句 (IELTS Academic Sample):")}</span>
                               <p className="text-stone-800 italic font-medium font-sans text-[10.5px] leading-normal">"{translationResult.example}"</p>
                               <p className="text-stone-500 text-[10px] mt-0.5">{translationResult.exampleTranslation}</p>
                             </div>
                           )}
 
                           <div className="pt-1.5 border-t border-stone-100 text-[9px] text-stone-400">
-                            💡 AI 已将本生词智能载入下方 <b>"快捷收录生词"</b> 表单，只需点击最下方 <b>"一键收录到词本"</b> 即可快速背诵。
+                            {uiText("💡 AI 已将本生词智能载入下方")} <b>{uiText("\"快捷收录生词\"")}</b> {uiText("表单，只需点击最下方")} <b>{uiText("\"一键收录到词本\"")}</b> {uiText("即可快速背诵。")}
                           </div>
                         </div>
                       )}
@@ -2876,13 +2872,13 @@ export default function MaterialsLibrary({
                     <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 shadow-xs space-y-3 animate-fade-in">
                       <div className="flex items-center justify-between border-b border-stone-200/60 pb-2">
                         <span className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
-                          <span>📝 批注标注详情 (Annotation Note)</span>
+                          <span>{uiText("📝 批注标注详情 (Annotation Note)")}</span>
                         </span>
                         <button 
                           onClick={() => setSelectedAnnotation(null)} 
                           className="text-stone-400 hover:text-stone-600 text-xs font-bold cursor-pointer"
                         >
-                          ✕ 关闭
+                          {uiText("✕ 关闭")}
                         </button>
                       </div>
                       
@@ -2892,9 +2888,9 @@ export default function MaterialsLibrary({
 
                       {/* Custom comments block */}
                       <div className="space-y-2">
-                        <label className="text-[10px] font-mono font-bold text-stone-400 block">编辑我的精读批注笔记 (Comments):</label>
+                        <label className="text-[10px] font-mono font-bold text-stone-400 block">{uiText("编辑我的精读批注笔记 (Comments):")}</label>
                         <textarea
-                          placeholder="在此记录你的学练心得、熟词僻义、派生同义词词伙..."
+                          placeholder={uiText("在此记录你的学练心得、熟词僻义、派生同义词词伙...")}
                           rows={3}
                           value={annotationCommentText}
                           onChange={(e) => setAnnotationCommentText(e.target.value)}
@@ -2905,13 +2901,13 @@ export default function MaterialsLibrary({
                             onClick={() => handleDeleteAnnotation(selectedAnnotation.id)}
                             className="text-xs text-red-500 hover:text-red-600 font-semibold cursor-pointer"
                           >
-                            🗑️ 删除划线/高亮
+                            {uiText("🗑️ 删除划线/高亮")}
                           </button>
                           <button
                             onClick={handleSaveAnnotationComment}
                             className="px-3.5 py-1.5 bg-stone-900 hover:bg-stone-850 text-white rounded-lg text-xs font-bold transition cursor-pointer"
                           >
-                            保存批注
+                            {uiText("保存批注")}
                           </button>
                         </div>
                       </div>
@@ -2919,26 +2915,26 @@ export default function MaterialsLibrary({
                   )}
                   
                   {/* Study notes tab card */}
-                  <div className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-2 flex flex-col">
-                    <span className="text-xs font-mono font-semibold text-stone-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Edit3 className="h-3.5 w-3.5" />
-                      我的备考笔记
-                    </span>
+                  <details className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-2">
+                    <summary className="cursor-pointer text-xs font-semibold text-stone-600">
+                      <Edit3 className="mr-2 inline h-3.5 w-3.5" />
+                      {uiText("我的笔记")}
+                    </summary>
                     <textarea
-                      placeholder="在这里写下你的高频词伙、特殊语法笔记，内容在退出时也会自动保存..."
+                      placeholder={uiText("在这里写下你的高频词伙、特殊语法笔记，内容在退出时也会自动保存...")}
                       rows={5}
                       value={notes}
                       onChange={(e) => handleSaveNotes(e.target.value)}
                       className="w-full p-2.5 bg-stone-50 border border-stone-250 rounded-xl text-xs font-sans focus:outline-hidden focus:border-stone-900 leading-relaxed"
                     />
-                  </div>
+                  </details>
 
                   {/* MANUAL SEARCH DICTIONARY CARD */}
-                  <div className="bg-white border border-amber-200/60 rounded-2xl p-4 shadow-xs space-y-3">
-                    <span className="text-xs font-mono font-semibold text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
-                      <Search className="h-3.5 w-3.5 text-amber-500" />
-                      随机生词检索与分析 (Instant Word Query)
-                    </span>
+                  <details className="bg-white border border-stone-200 rounded-2xl p-4 shadow-xs space-y-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-stone-600">
+                      <Search className="mr-2 inline h-3.5 w-3.5 text-amber-500" />
+                      {uiText("查词工具")}
+                    </summary>
                     <form 
                       onSubmit={(e) => {
                         e.preventDefault();
@@ -2948,46 +2944,46 @@ export default function MaterialsLibrary({
                     >
                       <input
                         type="text"
-                        placeholder="输入你想查询的任何单词 (e.g. resilient)..."
+                        placeholder={uiText("输入你想查询的任何单词 (e.g. resilient)...")}
                         value={manualSearchWord}
                         onChange={(e) => setManualSearchWord(e.target.value)}
-                        className="flex-1 px-3 py-1.5 bg-stone-50 border rounded-lg text-xs font-sans focus:outline-hidden focus:border-amber-500 text-stone-850"
+                        className="min-w-0 flex-1 px-3 py-1.5 bg-stone-50 border rounded-lg text-xs font-sans focus:outline-hidden focus:border-amber-500 text-stone-850"
                       />
                       <button
                         type="submit"
                         disabled={isTranslating || !manualSearchWord.trim()}
                         className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold rounded-lg text-xs flex items-center gap-1 cursor-pointer transition disabled:bg-stone-100 disabled:text-stone-400"
                       >
-                        {isTranslating ? '查询中...' : '查询'}
+                        {isTranslating ? uiText('查询中...') : uiText('查询')}
                       </button>
                     </form>
                     <p className="text-[10px] text-stone-400 leading-normal">
-                      💡 随机输入任何你突然想到的单词，AI 将自动分析其雅思考点并载入下方的快速收录表单。
+                      {uiText("输入词汇查询用法；也可以直接在原文中划词。")}
                     </p>
-                  </div>
+                  </details>
 
                   {/* QUICK ADD VOCABULARY CARD */}
-                  <div className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-3">
-                    <span className="text-xs font-mono font-semibold text-stone-400 uppercase tracking-wider flex items-center gap-1">
-                      <Plus className="h-3.5 w-3.5" />
-                      快捷收录生词到我的词书
-                    </span>
+                  <details open={quickWord ? true : undefined} className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-stone-600">
+                      <Plus className="mr-2 inline h-3.5 w-3.5" />
+                      {uiText("收藏词汇")}
+                    </summary>
 
                     <form onSubmit={handleQuickAddWord} className="space-y-2.5">
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-[9px] font-mono text-stone-400 block uppercase">生词 Word</label>
+                          <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("生词 Word")}</label>
                           <input
                             type="text"
                             required
-                            placeholder="自动填入或手动输入"
+                            placeholder={uiText("自动填入或手动输入")}
                             value={quickWord}
                             onChange={(e) => setQuickWord(e.target.value)}
                             className="w-full px-2 py-1.5 bg-stone-50 border rounded-lg text-xs"
                           />
                         </div>
                         <div>
-                          <label className="text-[9px] font-mono text-stone-400 block uppercase">音标 Phonetic</label>
+                          <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("音标 Phonetic")}</label>
                           <input
                             type="text"
                             placeholder="/.../"
@@ -3000,25 +2996,25 @@ export default function MaterialsLibrary({
 
                       <div className="grid grid-cols-3 gap-2">
                         <div className="col-span-1">
-                          <label className="text-[9px] font-mono text-stone-400 block uppercase">词性 POS</label>
+                          <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("词性 POS")}</label>
                           <select
                             value={quickPos}
                             onChange={(e) => setQuickPos(e.target.value)}
                             className="w-full p-1.5 bg-stone-50 border rounded-lg text-xs"
                           >
-                            <option value="v.">v. 动词</option>
-                            <option value="n.">n. 名词</option>
-                            <option value="adj.">adj. 形容词</option>
-                            <option value="adv.">adv. 副词</option>
-                            <option value="phrase">phrase 词伙</option>
+                            <option value="v.">{uiText("v. 动词")}</option>
+                            <option value="n.">{uiText("n. 名词")}</option>
+                            <option value="adj.">{uiText("adj. 形容词")}</option>
+                            <option value="adv.">{uiText("adv. 副词")}</option>
+                            <option value="phrase">{uiText("phrase 词伙")}</option>
                           </select>
                         </div>
                         <div className="col-span-2">
-                          <label className="text-[9px] font-mono text-stone-400 block uppercase">中文释义 Chinese</label>
+                          <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("中文释义 Chinese")}</label>
                           <input
                             type="text"
                             required
-                            placeholder="如: 缓解，减轻"
+                            placeholder={uiText("如: 缓解，减轻")}
                             value={quickChinese}
                             onChange={(e) => setQuickChinese(e.target.value)}
                             className="w-full px-2 py-1.5 bg-stone-50 border rounded-lg text-xs"
@@ -3027,7 +3023,7 @@ export default function MaterialsLibrary({
                       </div>
 
                       <div>
-                        <label className="text-[9px] font-mono text-stone-400 block uppercase">英文定义 Definition</label>
+                        <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("英文定义 Definition")}</label>
                         <input
                           type="text"
                           placeholder="English meaning..."
@@ -3038,7 +3034,7 @@ export default function MaterialsLibrary({
                       </div>
 
                       <div>
-                        <label className="text-[9px] font-mono text-stone-400 block uppercase">备考学术例句 Example</label>
+                          <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("语境例句 Example")}</label>
                         <textarea
                           placeholder="IELTS context example sentence..."
                           rows={1}
@@ -3049,9 +3045,9 @@ export default function MaterialsLibrary({
                       </div>
 
                       <div>
-                        <label className="text-[9px] font-mono text-stone-400 block uppercase">生词记忆笔记 My Notes</label>
+                        <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("生词记忆笔记 My Notes")}</label>
                         <textarea
-                          placeholder="输入你对该词的记忆法、联想或特别用法笔记..."
+                          placeholder={uiText("输入你对该词的记忆法、联想或特别用法笔记...")}
                           rows={1.5}
                           value={quickUserNotes}
                           onChange={(e) => setQuickUserNotes(e.target.value)}
@@ -3071,30 +3067,30 @@ export default function MaterialsLibrary({
                         {quickWordAdded ? (
                           <>
                             <Check className="h-3.5 w-3.5" />
-                            成功加入该模块词书！
+                            {uiText("成功加入该模块词书！")}
                           </>
-                        ) : '收录生词'}
+                        ) : uiText('收录生词')}
                       </button>
                     </form>
-                  </div>
+                  </details>
 
                   {/* DISPLAY AI KNOWLEDGE POINTS CARD */}
                   {aiSummary && (
                     <div className="bg-white border border-stone-200/80 rounded-2xl p-4 shadow-xs space-y-4 animate-fade-in">
                       <div className="flex items-center gap-1 text-amber-600 border-b border-stone-100 pb-2">
                         <Sparkles className="h-4 w-4 fill-amber-500 text-amber-500 animate-pulse" />
-                        <span className="text-xs font-bold font-sans">AI 核心考点总结提炼</span>
+                        <span className="text-xs font-bold font-sans">{uiText("AI 核心考点总结提炼")}</span>
                       </div>
 
                       {/* Brief overview */}
                       <p className="text-xs text-stone-600 bg-amber-50/50 p-2.5 rounded-xl leading-relaxed border border-amber-100">
-                        <b>核心要点:</b> {aiSummary.summary}
+                        <b>{uiText("核心要点:")}</b> {aiSummary.summary}
                       </p>
 
                       {/* Vocabulary list */}
                       {aiSummary.keyVocabulary && aiSummary.keyVocabulary.length > 0 && (
                         <div className="space-y-2">
-                          <h5 className="text-[10px] font-mono text-stone-400 uppercase tracking-wider">🌟 高频学术词汇</h5>
+                          <h5 className="text-[10px] font-mono text-stone-400 uppercase tracking-wider">{uiText("🌟 高频学术词汇")}</h5>
                           <div className="space-y-2">
                             {aiSummary.keyVocabulary.map((v: any, index: number) => (
                               <div key={index} className="bg-stone-50 p-2.5 rounded-lg border border-stone-150 flex flex-col space-y-1">
@@ -3113,7 +3109,7 @@ export default function MaterialsLibrary({
                                           example: v.example,
                                           exampleTranslation: '源自AI考点提炼。',
                                           category: activeCategory,
-                                          topic: activeFolder?.name || 'Academic Summary',
+                                          topic: activeMaterial?.scene?.primary || activeFolder?.name || '日常表达',
                                           sourceMaterialId: activeMaterial?.id,
                                           sourceMaterialName: activeMaterial?.name,
                                           sourceSentence: v.example || activeMaterial?.content?.slice(0, 150) + '...'
@@ -3122,7 +3118,7 @@ export default function MaterialsLibrary({
                                       }}
                                       className="text-[9px] bg-stone-900 text-white px-1.5 py-0.5 rounded hover:bg-stone-850"
                                     >
-                                      收录
+                                      {uiText("收录")}
                                     </button>
                                   </div>
                                   <span className="text-[11px] text-stone-600">{v.chinese}</span>
@@ -3137,7 +3133,7 @@ export default function MaterialsLibrary({
                       {/* Grammar points */}
                       {aiSummary.grammarPoints && aiSummary.grammarPoints.length > 0 && (
                         <div className="space-y-2">
-                          <h5 className="text-[10px] font-mono text-stone-400 uppercase tracking-wider">✍️ 推荐学术句型</h5>
+                          <h5 className="text-[10px] font-mono text-stone-400 uppercase tracking-wider">{uiText("✍️ 推荐学术句型")}</h5>
                           <div className="space-y-1.5">
                             {aiSummary.grammarPoints.map((g: any, index: number) => (
                               <div key={index} className="bg-stone-50 p-2.5 rounded-lg border text-xs">
@@ -3153,7 +3149,7 @@ export default function MaterialsLibrary({
                       {/* Collocations */}
                       {aiSummary.collocations && aiSummary.collocations.length > 0 && (
                         <div className="space-y-1.5">
-                          <h5 className="text-[10px] font-mono text-stone-400 uppercase tracking-wider">📖 高分词组/词伙搭配</h5>
+                          <h5 className="text-[10px] font-mono text-stone-400 uppercase tracking-wider">{uiText("📖 高分词组/词伙搭配")}</h5>
                           <div className="flex flex-wrap gap-1.5">
                             {aiSummary.collocations.map((col: string, index: number) => (
                               <span key={index} className="bg-stone-100 border text-stone-600 text-[10px] px-2 py-0.5 rounded-full font-mono font-medium">

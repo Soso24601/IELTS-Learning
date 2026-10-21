@@ -1,3 +1,4 @@
+import { uiText, useLanguage } from "../lib/language";
 /**
  * 账号与设置弹窗：账号信息 / AI 大模型(每用户自带 Key) / 每日目标 / 数据备份迁移。
  * 打开时通过 gear（学习设置）图标进入。
@@ -32,6 +33,7 @@ import {
 } from '../lib/authApi';
 import { LLM_PROVIDERS, LLMProvider, metaOf } from '../lib/llmPresets';
 import { listLocalEntries, writeLocalEntries } from '../lib/localData';
+import LanguageSwitch from './LanguageSwitch';
 
 interface Props {
   open: boolean;
@@ -48,7 +50,7 @@ function Section({ icon, title, children }: { icon: React.ReactNode; title: stri
     <section className="border border-stone-200 rounded-2xl p-4">
       <h3 className="flex items-center gap-2 text-sm font-serif font-bold text-stone-800 mb-3">
         {icon}
-        {title}
+        {uiText(title)}
       </h3>
       {children}
     </section>
@@ -59,6 +61,7 @@ const inputCls =
   'w-full px-3 py-2 bg-stone-50 border border-stone-300/70 rounded-lg text-xs text-stone-800 focus:outline-none focus:ring-2 focus:ring-amber-400/50 placeholder:text-stone-400';
 
 export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoal, onLogout, onUserChanged }: Props) {
+  useLanguage();
   const [goal, setGoal] = useState(dailyGoal);
   const [provider, setProvider] = useState<LLMProvider>('deepseek');
   const [apiKey, setApiKey] = useState('');
@@ -232,7 +235,7 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-serif font-bold text-base text-stone-900 flex items-center gap-2">
             <UserIcon className="w-4 h-4 text-stone-400" />
-            账号与设置
+            {uiText("账号与设置")}
           </h3>
           <button onClick={onClose} className="p-1 bg-stone-100 hover:bg-stone-200 rounded-lg text-stone-500 transition cursor-pointer">
             <X className="w-4 h-4" />
@@ -241,23 +244,26 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
 
         <div className="space-y-3">
           {/* 1. 账号 */}
-          <Section icon={<UserIcon className="w-3.5 h-3.5 text-amber-500" />} title="我的账号">
+          <Section icon={<UserIcon className="w-3.5 h-3.5 text-amber-500" />} title={uiText("我的账号")}>
             <div className="flex items-center justify-between text-xs">
               <div>
                 <div className="font-semibold text-stone-800">@{user.username}</div>
-                <div className="text-stone-400 mt-0.5">{user.email || '未绑定邮箱'}</div>
+                <div className="text-stone-400 mt-0.5">{user.email || uiText('未绑定邮箱')}</div>
               </div>
               <button
                 onClick={onLogout}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 text-xs font-medium hover:bg-red-50 transition cursor-pointer"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                退出登录
+                {uiText("退出登录")}
               </button>
             </div>
           </Section>
 
           {/* 2. AI 大模型 */}
+          <Section icon={<UserIcon className="h-3.5 w-3.5" />} title={uiText('界面语言')}>
+            <LanguageSwitch />
+          </Section>
           <Section
             icon={
               llmStatus?.configured ? (
@@ -266,16 +272,15 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                 <Bot className="w-3.5 h-3.5 text-amber-500" />
               )
             }
-            title={`AI 大模型${llmStatus?.configured ? '（已配置 ✔）' : ''}`}
+            title={uiText('AI 大模型') + (llmStatus?.configured ? uiText('（已配置 ✔）') : '')}
           >
             <div className="space-y-2.5">
               <p className="text-[11px] leading-relaxed text-stone-500">
-                在这里填写<b>你自己的</b> API Key，AI 助教、翻译、总结等功能即为你所用（费用记在你自己账号上）。
-                DeepSeek 在 <span className="text-stone-700">platform.deepseek.com</span> 申请，充几块钱就能用很久。
+                {uiText("在这里填写")}<b>{uiText("你自己的")}</b> {uiText("API Key，AI 助教、翻译、总结等功能即为你所用（费用记在你自己账号上）。 DeepSeek 在")} <span className="text-stone-700">platform.deepseek.com</span> {uiText("申请，充几块钱就能用很久。")}
               </p>
 
               <div>
-                <label className="text-[11px] font-mono text-stone-500 block mb-1">选择模型</label>
+                <label className="text-[11px] font-mono text-stone-500 block mb-1">{uiText("选择模型")}</label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {LLM_PROVIDERS.map((p) => (
                     <button
@@ -287,7 +292,7 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                           : 'border-stone-200 bg-white text-stone-600 hover:bg-stone-50'
                       }`}
                     >
-                      <span className="block font-semibold">{p.label}</span>
+                      <span className="block font-semibold">{uiText(p.label)}</span>
                       <span className="block text-[10px] font-normal mt-0.5 opacity-70">{p.hint}</span>
                     </button>
                   ))}
@@ -317,16 +322,16 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
 
               {provider === 'openai' && (
                 <div>
-                  <label className="text-[11px] font-mono text-stone-500 block mb-1">Base URL（自定义接口）</label>
+                  <label className="text-[11px] font-mono text-stone-500 block mb-1">{uiText("Base URL（自定义接口）")}</label>
                   <input className={modalInput} placeholder="https://api.moonshot.cn/v1" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
                 </div>
               )}
               {provider === 'deepseek' && baseUrl === '' && (
-                <p className="text-[10px] text-stone-400">接口地址：https://api.deepseek.com/v1</p>
+                <p className="text-[10px] text-stone-400">{uiText("接口地址：https://api.deepseek.com/v1")}</p>
               )}
 
               <div>
-                <label className="text-[11px] font-mono text-stone-500 block mb-1">模型名</label>
+                <label className="text-[11px] font-mono text-stone-500 block mb-1">{uiText("模型名")}</label>
                 <input
                   className={modalInput}
                   placeholder={provider === 'deepseek' ? 'deepseek-chat' : '模型名，如 kimi-k2 / qwen-max'}
@@ -342,7 +347,7 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                   className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-stone-300 text-xs font-medium text-stone-700 hover:bg-stone-50 transition cursor-pointer disabled:opacity-60"
                 >
                   {busy === 'test' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlugZap className="w-3.5 h-3.5 text-amber-500" />}
-                  测试连接
+                  {uiText("测试连接")}
                 </button>
                 <button
                   onClick={handleSave}
@@ -350,14 +355,14 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                   className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-stone-900 text-white text-xs font-medium hover:bg-stone-800 transition cursor-pointer disabled:opacity-60"
                 >
                   {busy === 'save' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                  保存配置
+                  {uiText("保存配置")}
                 </button>
               </div>
             </div>
           </Section>
 
           {/* 3. 学习目标 */}
-          <Section icon={<Target className="w-3.5 h-3.5 text-amber-500" />} title="学习目标">
+          <Section icon={<Target className="w-3.5 h-3.5 text-amber-500" />} title={uiText("学习目标")}>
             <div className="flex gap-2 items-center">
               <input
                 type="number"
@@ -367,7 +372,7 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                 onChange={(e) => setGoal(Number(e.target.value))}
                 className={modalInput}
               />
-              <span className="text-stone-500 text-xs whitespace-nowrap">词 / 天</span>
+              <span className="text-stone-500 text-xs whitespace-nowrap">{uiText("词 / 天")}</span>
               <button
                 onClick={() => {
                   onSaveGoal(goal);
@@ -375,16 +380,16 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                 }}
                 className="px-3 py-2 bg-stone-900 text-white text-xs font-medium rounded-lg hover:bg-stone-800 transition cursor-pointer"
               >
-                保存
+                {uiText("保存")}
               </button>
             </div>
             <p className="text-[10px] text-stone-400 mt-1.5 leading-relaxed">
-              雅思官方推荐每日复习 15–30 词，高频低扰复习更能巩固记忆。
+              {uiText("雅思官方推荐每日复习 15–30 词，高频低扰复习更能巩固记忆。")}
             </p>
           </Section>
 
           {/* 4. 数据 */}
-          <Section icon={<Database className="w-3.5 h-3.5 text-amber-500" />} title="数据迁移与备份">
+          <Section icon={<Database className="w-3.5 h-3.5 text-amber-500" />} title={uiText("数据迁移与备份")}>
             <div className="space-y-2">
               {importCandidates > 0 ? (
                 <button
@@ -394,12 +399,12 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                 >
                   <span className="flex items-center gap-2">
                     <Sparkles className="w-3.5 h-3.5" />
-                    把本浏览器的 {importCandidates} 组旧数据并入本账号
+                    {uiText("把本浏览器的")} {importCandidates} {uiText("组旧数据并入本账号")}
                   </span>
                   {busy === 'importLocal' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 </button>
               ) : (
-                <p className="text-[11px] text-stone-400 px-1">本浏览器没有待并入的旧数据（词书 / 进度 / 材料均已在云端）。</p>
+                <p className="text-[11px] text-stone-400 px-1">{uiText("本浏览器没有待并入的旧数据（词书 / 进度 / 材料均已在云端）。")}</p>
               )}
 
               <div className="flex gap-2">
@@ -408,14 +413,14 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-stone-300 text-xs font-medium text-stone-700 hover:bg-stone-50 transition cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  导出备份
+                  {uiText("导出备份")}
                 </button>
                 <button
                   onClick={() => fileRef.current?.click()}
                   className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-stone-300 text-xs font-medium text-stone-700 hover:bg-stone-50 transition cursor-pointer"
                 >
                   {busy === 'importFile' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                  从备份恢复
+                  {uiText("从备份恢复")}
                 </button>
                 <input
                   ref={fileRef}
@@ -426,7 +431,7 @@ export default function AccountModal({ open, onClose, user, dailyGoal, onSaveGoa
                 />
               </div>
               <p className="text-[10px] text-stone-400 px-1 leading-relaxed">
-                共享学习材料由管理员管理；此备份包含你的个人笔记、词汇和学习进度。
+                {uiText("共享学习材料由管理员管理；此备份包含你的个人笔记、词汇和学习进度。")}
               </p>
             </div>
           </Section>

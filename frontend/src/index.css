@@ -1,10 +1,120 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Playfair Display", Georgia, Cambria, "Times New Roman", Times, serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-serif: var(--font-sans);
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+:root {
+  --ui-page: #f7f6f2;
+  --ui-surface: #fff;
+  --ui-muted: #eeeee6;
+  --ui-ink: #252b25;
+  --ui-secondary: #60695e;
+  --ui-tertiary: #6d7466;
+  --ui-border: #dfe2d8;
+  --ui-green: #29382e;
+  --ui-green-soft: #e7ede4;
+  --ui-amber: #edcc78;
+  --ui-radius: 20px;
+  --ui-control-radius: 10px;
+  --ui-section-space: clamp(32px, 4vw, 48px);
+}
+
+.learner-app {
+  background: var(--ui-page);
+  color: var(--ui-ink);
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.learner-app :where(button, a, input, select, textarea, summary):focus-visible {
+  outline: 3px solid #866313;
+  outline-offset: 3px;
+}
+
+.learner-app :where(button:not(:disabled), summary) { cursor: pointer; }
+.learner-app :where(button:disabled) { cursor: not-allowed; }
+
+/* Keep supporting Chinese text readable, including older learning tools. */
+.learner-app :where(.text-xs, [class~="text-[9px]"], [class~="text-[10px]"], [class~="text-[11px]"]) {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.learner-app :where(.text-stone-400) { color: var(--ui-tertiary); }
+.learner-app :where(.text-stone-500) { color: var(--ui-secondary); }
+.learner-app :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  border-radius: var(--ui-control-radius);
+  font-size: 14px;
+}
+.learner-app :where(input:not([type="checkbox"]):not([type="radio"]), select) { min-height: 44px; }
+.learner-app :where(textarea) { line-height: 1.8; }
+.learner-app :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--ui-green); }
+.learner-app #app-header { background: #fafaf6; box-shadow: none; }
+.learner-app #app-header :where(button, summary) { min-height: 40px; }
+.learner-app #app-header [class~="text-[9px]"] { font-size: 10px; line-height: 1.5; }
+
+.ui-page-stack { display: flex; flex-direction: column; gap: var(--ui-section-space); }
+.ui-kicker { color: #79612b; font-size: 11px; font-weight: 600; letter-spacing: .16em; line-height: 1.6; }
+.ui-page-title { font-size: clamp(26px, 3vw, 36px); line-height: 1.4; font-weight: 650; letter-spacing: -.035em; text-wrap: balance; }
+.ui-section-title { font-size: 21px; font-weight: 650; line-height: 1.5; letter-spacing: -.02em; }
+.ui-description { font-size: 15px; line-height: 1.8; color: var(--ui-secondary); }
+.ui-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 12px; border: 1px solid transparent; border-radius: var(--ui-control-radius); padding: 10px 18px; font-size: 14px; font-weight: 600; line-height: 1.5; transition: background-color 160ms ease, border-color 160ms ease; }
+.ui-button-primary { background: var(--ui-amber); color: #22291f; }
+.ui-button-secondary { background: var(--ui-surface); border-color: var(--ui-border); color: var(--ui-ink); }
+.ui-button-text { padding-inline: 0; background: transparent; color: var(--ui-secondary); }
+.ui-button:disabled { opacity: .5; }
+.ui-hero { border: 0; border-radius: var(--ui-radius); background: #eeefe7; }
+.ui-hero-main { background: var(--ui-green); padding: clamp(24px, 3.2vw, 40px); }
+.ui-hero-title { font-size: clamp(28px, 3vw, 38px); line-height: 1.4; font-weight: 600; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.ui-hero-main .ui-kicker { color: #d4dcbc; }
+.ui-hero .ui-hero-meta { color: #c5d1be; font-size: 13px; }
+.ui-learning-route { padding: clamp(24px, 3vw, 36px); }
+.ui-route-step { display: flex; gap: 12px; }
+.ui-route-icon { background: #e2e7dc; border: 0; color: #50634d; }
+.ui-route-title { font-size: 15px; line-height: 1.6; font-weight: 600; }
+.ui-route-description { font-size: 13px; line-height: 1.8; color: var(--ui-secondary); }
+.ui-scene-card { border: 1px solid transparent; border-radius: var(--ui-radius); background: var(--ui-surface); padding: 24px; transition: background-color 160ms ease, border-color 160ms ease; }
+.ui-scene-card h3 { font-size: 18px; line-height: 1.6; font-weight: 600; }
+.ui-scene-card .ui-scene-count { border-top: 0; color: var(--ui-tertiary); font-size: 13px; line-height: 1.6; }
+.ui-filter-panel { border: 0; border-block: 1px solid var(--ui-border); border-radius: 0; padding: 24px 0; background: transparent; }
+.ui-filter-panel :where(select, input) { background: var(--ui-surface); }
+.ui-filter-panel label > span:has(input) { padding-block: 0; }
+.ui-filter-controls button { min-height: 44px; border-radius: var(--ui-control-radius); }
+.ui-filter-controls button[aria-pressed="true"] { background: var(--ui-green-soft); color: #33472f; }
+.ui-material-card { border: 1px solid var(--ui-border); border-radius: var(--ui-radius); background: var(--ui-surface); }
+.ui-material-card .ui-material-caption { padding: 20px; }
+.ui-material-card .ui-material-name { font-size: 16px; line-height: 1.6; font-weight: 600; }
+.ui-material-meta { font-size: 13px; line-height: 1.7; color: var(--ui-secondary); }
+.learner-app #material-study-workspace .shadow-xs { box-shadow: none; }
+.ui-reading-text { max-width: 68ch; margin-inline: auto; font-size: 18px; line-height: 1.85; }
+.ui-study-tools > details { border: 0; border-bottom: 1px solid var(--ui-border); border-radius: 0; background: transparent; padding: 16px 0; box-shadow: none; }
+.ui-study-tools > details > summary { min-height: 36px; line-height: 36px; font-size: 14px; }
+.ui-study-tools > details[open] > summary { margin-bottom: 12px; }
+
+@media (hover: hover) {
+  .ui-button-primary:not(:disabled):hover { background: #f3d894; }
+  .ui-button-secondary:not(:disabled):hover { background: #f1f3ed; border-color: #a6b19d; }
+  .ui-button-text:not(:disabled):hover { color: var(--ui-green); }
+  .ui-scene-card:hover, .ui-material-card:hover { background: #fcfdf9; border-color: #a6b19d; }
+}
+
+@media (max-width: 639px) {
+  .learner-app :where(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { font-size: 16px; }
+  .ui-page-title { font-size: 27px; }
+  .ui-section-title { font-size: 20px; }
+  .ui-hero-main .ui-hero-domain { margin-top: 20px; }
+  .ui-hero-main .ui-button { margin-top: 24px; }
+  .ui-learning-route { padding: 16px 20px; }
+  .ui-route-eyebrow, .ui-route-description, .ui-route-icon { display: none; }
+  .ui-route-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 0; }
+  .ui-route-steps > * + * { margin-top: 0; }
+  .ui-route-title { font-size: 13px; font-weight: 500; }
+  .ui-route-title > span { display: block; margin-bottom: 4px; }
+  .ui-scene-card { padding: 20px; }
+  .ui-filter-panel { padding: 20px 0; }
+  .ui-reading-text { font-size: 17px; }
 }
 
 /* Custom fade-in & slide-up interactive animations */
@@ -36,6 +146,16 @@
 
 .animate-slide-in {
   animation: slideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in, .animate-slide-in { animation: none; }
+  .learner-app *, .learner-app *::before, .learner-app *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
 }
 
 /* Scrollbar Styles */

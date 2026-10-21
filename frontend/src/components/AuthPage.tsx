@@ -1,3 +1,4 @@
+import { uiText, useLanguage } from "../lib/language";
 /**
  * 登录 / 注册页。首次登录空账号时，若浏览器里残留旧 ielts_* 数据会自动导入（由主入口处理）。
  */
@@ -5,12 +6,14 @@ import React, { useState } from 'react';
 import { Brain, LogIn, UserPlus, Lock, AtSign, User, Loader2, Sparkles } from 'lucide-react';
 import { apiLogin, apiRegister, friendlyApiError, PublicUser } from '../lib/authApi';
 import { countLocalEntries, getLastAccount } from '../lib/localData';
+import LanguageSwitch from './LanguageSwitch';
 
 interface Props {
   onAuthed: (user: PublicUser) => void;
 }
 
 export default function AuthPage({ onAuthed }: Props) {
+  useLanguage();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [identifier, setIdentifier] = useState('');
   const [username, setUsername] = useState('');
@@ -60,13 +63,14 @@ export default function AuthPage({ onAuthed }: Props) {
   return (
     <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4 font-sans">
       <div className="w-full max-w-md">
+        <div className="mb-4 flex justify-end"><LanguageSwitch /></div>
         {/* Brand */}
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-stone-900 text-amber-400 shadow-lg mb-3">
             <Brain className="w-7 h-7" />
           </div>
           <h1 className="text-2xl font-serif font-bold text-stone-900 tracking-tight">IELTS Vocabulary Builder</h1>
-          <p className="text-xs font-mono text-stone-400 uppercase tracking-widest mt-1">雅思词汇记背伴侣</p>
+          <p className="text-xs font-mono text-stone-400 uppercase tracking-widest mt-1">{uiText("雅思词汇记背伴侣")}</p>
         </div>
 
         <div className="bg-white rounded-3xl shadow-sm border border-stone-200 p-6 sm:p-7">
@@ -80,7 +84,7 @@ export default function AuthPage({ onAuthed }: Props) {
               }`}
             >
               <LogIn className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
-              登录
+              {uiText("登录")}
             </button>
             <button
               type="button"
@@ -90,14 +94,14 @@ export default function AuthPage({ onAuthed }: Props) {
               }`}
             >
               <UserPlus className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
-              注册新账号
+              {uiText("注册新账号")}
             </button>
           </div>
 
           {hasLegacy && (
             <div className="mb-4 px-3 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] leading-relaxed text-amber-800">
               <Sparkles className="w-3.5 h-3.5 inline mr-1 -mt-0.5" />
-              检测到本浏览器里有 {legacyCount} 组旧学习数据。注册并登录新账号后，将自动把它们保存到云端（数据不丢失）。
+              {uiText("检测到本浏览器里有")} {legacyCount} {uiText("组旧学习数据。注册并登录新账号后，将自动把它们保存到云端（数据不丢失）。")}
             </div>
           )}
 
@@ -106,36 +110,36 @@ export default function AuthPage({ onAuthed }: Props) {
               <>
                 <div className="relative">
                   <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input className={inputCls} placeholder="用户名（如：ielts_learner）" value={username} onChange={(e) => setUsername(e.target.value)} />
+                  <input className={inputCls} placeholder={uiText("用户名（如：ielts_learner）")} value={username} onChange={(e) => setUsername(e.target.value)} />
                 </div>
                 <div className="relative">
                   <AtSign className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input className={inputCls} placeholder="邮箱（可选）" value={email} onChange={(e) => setEmail(e.target.value)} />
+                  <input className={inputCls} placeholder={uiText("邮箱（可选）")} value={email} onChange={(e) => setEmail(e.target.value)} />
                 </div>
                 <div className="relative">
                   <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input type="password" className={inputCls} placeholder="密码（至少 6 位）" value={password} onChange={(e) => setPassword(e.target.value)} />
+                  <input type="password" className={inputCls} placeholder={uiText("密码（至少 6 位）")} value={password} onChange={(e) => setPassword(e.target.value)} />
                 </div>
                 <div className="relative">
                   <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input type="password" className={inputCls} placeholder="再次输入密码" value={password2} onChange={(e) => setPassword2(e.target.value)} />
+                  <input type="password" className={inputCls} placeholder={uiText("再次输入密码")} value={password2} onChange={(e) => setPassword2(e.target.value)} />
                 </div>
               </>
             ) : (
               <>
                 <div className="relative">
                   <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input className={inputCls} placeholder="用户名或邮箱" value={identifier} onChange={(e) => setIdentifier(e.target.value)} autoFocus />
+                  <input className={inputCls} placeholder={uiText("用户名或邮箱")} value={identifier} onChange={(e) => setIdentifier(e.target.value)} autoFocus />
                 </div>
                 <div className="relative">
                   <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input type="password" className={inputCls} placeholder="密码" value={password} onChange={(e) => setPassword(e.target.value)} />
+                  <input type="password" className={inputCls} placeholder={uiText("密码")} value={password} onChange={(e) => setPassword(e.target.value)} />
                 </div>
               </>
             )}
 
-            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</div>}
-            {info && <div className="text-xs text-stone-500 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2">{info}</div>}
+            {error && <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{uiText(error)}</div>}
+            {info && <div className="text-xs text-stone-500 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2">{uiText(info)}</div>}
 
             <button
               type="submit"
@@ -143,14 +147,14 @@ export default function AuthPage({ onAuthed }: Props) {
               className="w-full py-2.5 bg-stone-900 hover:bg-stone-800 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition cursor-pointer flex items-center justify-center gap-2"
             >
               {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-              {mode === 'login' ? '登录' : '创建账号并登录'}
+              {mode === 'login' ? uiText('登录') : uiText('创建账号并登录')}
             </button>
           </form>
 
           <p className="mt-4 text-[11px] leading-relaxed text-stone-400 text-center">
-            数据按账号保存在云端，换设备登录即可继续学习。
+            {uiText("数据按账号保存在云端，换设备登录即可继续学习。")}
             <br />
-            AI 功能需在设置中填写你自己的大模型 API Key（如 DeepSeek）。
+            {uiText("AI 功能需在设置中填写你自己的大模型 API Key（如 DeepSeek）。")}
           </p>
         </div>
       </div>

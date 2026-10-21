@@ -1,3 +1,4 @@
+import { uiText, useLanguage } from "../lib/language";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -35,6 +36,7 @@ export default function Flashcards({
   onToggleStar,
   onNavigate
 }: FlashcardsProps) {
+  useLanguage();
   const [isFlipped, setIsFlipped] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [sessionReviewedCount, setSessionReviewedCount] = useState(0);
@@ -99,11 +101,11 @@ export default function Flashcards({
         <div className="flex items-center justify-between text-xs font-mono text-stone-500 bg-white/60 p-4 rounded-2xl border border-stone-200/50">
           <div className="flex items-center gap-1.5">
             <BookMarked className="h-4 w-4 text-amber-500" />
-            <span>本次学习进度: <b>{currentIndex + 1} / {dueWords.length}</b> 个单词</span>
+            <span>{uiText("本次学习进度:")} <b>{currentIndex + 1} / {dueWords.length}</b> {uiText("个单词")}</span>
           </div>
           <div className="flex items-center gap-1.5">
             <Flame className="h-4 w-4 text-amber-500" />
-            <span>本轮已复习: <b>{sessionReviewedCount}</b> 词</span>
+            <span>{uiText("本轮已复习:")} <b>{sessionReviewedCount}</b> {uiText("词")}</span>
           </div>
         </div>
       )}
@@ -116,20 +118,20 @@ export default function Flashcards({
             <CheckCircle className="h-10 w-10" />
           </div>
           <div className="space-y-2">
-            <h3 className="font-serif font-bold text-2xl text-stone-900">当前学习轮次已结束</h3>
+            <h3 className="font-serif font-bold text-2xl text-stone-900">{uiText("当前学习轮次已结束")}</h3>
             <p className="text-stone-500 text-sm max-w-md mx-auto leading-relaxed">
-              已复习的词汇会按间隔再次进入复习队列；跳过的词汇可在下一轮继续学习。
+              {uiText("已复习的词汇会按间隔再次进入复习队列；跳过的词汇可在下一轮继续学习。")}
             </p>
           </div>
 
           <div className="bg-stone-50 rounded-2xl p-4 max-w-xs mx-auto border border-stone-150 flex justify-between text-xs font-mono text-stone-600">
             <div>
-              <p className="text-stone-400">本次练习</p>
-              <p className="text-lg font-bold text-stone-850">{sessionReviewedCount} 个词</p>
+              <p className="text-stone-400">{uiText("本次练习")}</p>
+              <p className="text-lg font-bold text-stone-850">{sessionReviewedCount} {uiText("个词")}</p>
             </div>
             <div className="border-r border-stone-200"></div>
             <div>
-              <p className="text-stone-400">记忆算法</p>
+              <p className="text-stone-400">{uiText("记忆算法")}</p>
               <p className="text-lg font-bold text-amber-600">Leitner v2</p>
             </div>
           </div>
@@ -140,14 +142,14 @@ export default function Flashcards({
               onClick={handleRestart}
               className="flex-1 py-3 px-4 bg-stone-100 hover:bg-stone-200 rounded-xl text-xs font-medium text-stone-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
             >
-              <RotateCcw className="h-4 w-4" /> 开始下一轮
+              <RotateCcw className="h-4 w-4" /> {uiText("开始下一轮")}
             </button>
             <button
               id="btn-navigate-to-ai"
               onClick={() => onNavigate('ai-coach')}
               className="flex-1 py-3 px-4 bg-stone-900 hover:bg-stone-850 rounded-xl text-xs font-medium text-white transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
             >
-              <Sparkles className="h-4 w-4 text-amber-400" /> AI 写作与真题实战 <ArrowRight className="h-3.5 w-3.5" />
+              <Sparkles className="h-4 w-4 text-amber-400" /> {uiText("AI 写作与真题实战")} <ArrowRight className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -166,9 +168,9 @@ export default function Flashcards({
             {/* Top Row: Star / Category Badge */}
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-mono bg-stone-100 border text-stone-500 px-2.5 py-0.5 rounded-full capitalize">
-                {currentWord.category === 'reading' ? '📖 阅读词汇' : 
-                 currentWord.category === 'writing' ? '✍️ 写作词汇' : 
-                 currentWord.category === 'speaking' ? '🗣️ 口语表达词汇' : '🎧 听力与听写词汇'}
+                {currentWord.category === 'reading' ? uiText('📖 阅读词汇') :
+                 currentWord.category === 'writing' ? uiText('✍️ 写作词汇') :
+                 currentWord.category === 'speaking' ? uiText('🗣️ 口语表达词汇') : uiText('🎧 听力与听写词汇')}
               </span>
               
               <div className="flex items-center gap-2">
@@ -202,14 +204,14 @@ export default function Flashcards({
                     <button 
                       onClick={(e) => handleSpeak(currentWord.word, e)}
                       className="p-1 text-stone-400 hover:text-amber-500 rounded-sm"
-                      title="朗读"
+                      title={uiText("朗读")}
                     >
                       <Volume2 className="h-4 w-4" />
                     </button>
                   </div>
                   <div className="pt-6 flex justify-center">
                     <span className="inline-flex items-center gap-1 px-4 py-2 bg-stone-100 hover:bg-stone-200 border text-xs font-mono text-stone-600 rounded-full transition">
-                      <Eye className="h-3.5 w-3.5 text-stone-400" /> 点击卡片或空格翻面
+                      <Eye className="h-3.5 w-3.5 text-stone-400" /> {uiText("点击卡片或空格翻面")}
                     </span>
                   </div>
                 </div>
@@ -230,13 +232,13 @@ export default function Flashcards({
                   </div>
 
                   <div className="space-y-1">
-                    <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">英文释义</span>
+                    <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">{uiText("英文释义")}</span>
                     <p className="text-stone-600 text-sm leading-relaxed">{currentWord.definition}</p>
                   </div>
 
                   {currentWord.example && (
                     <div className="space-y-1 bg-amber-500/5 p-3 rounded-xl border border-amber-500/10">
-                      <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">雅思真题例句</span>
+                      <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">{uiText("雅思真题例句")}</span>
                       <p className="text-stone-800 text-xs leading-relaxed italic">
                         "{currentWord.example}"
                       </p>
@@ -249,8 +251,8 @@ export default function Flashcards({
 
             {/* Bottom Row: Topic */}
             <div className="flex justify-between items-center text-[10px] font-mono text-stone-400">
-              <span>学术门类: <b>{currentWord.topic}</b></span>
-              <span>{isFlipped ? '再点一次可翻回正面' : '拼写检查：请注意该词拼写'}</span>
+              <span>{uiText("学术门类:")} <b>{currentWord.topic}</b></span>
+              <span>{isFlipped ? uiText('再点一次可翻回正面') : uiText('拼写检查：请注意该词拼写')}</span>
             </div>
           </div>
 
@@ -258,7 +260,7 @@ export default function Flashcards({
           {isFlipped ? (
             <div className="space-y-3 animate-slide-in">
               <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block text-center">
-                你记住了这个单词吗？(Leitner 智能反馈)
+                {uiText("你记住了这个单词吗？(Leitner 智能反馈)")}
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <button
@@ -266,8 +268,8 @@ export default function Flashcards({
                   onClick={() => handleReview('forgot')}
                   className="flex flex-col items-center justify-center p-3.5 bg-red-50 hover:bg-red-100 border border-red-200 hover:border-red-300 rounded-2xl transition cursor-pointer text-center group"
                 >
-                  <span className="text-sm font-bold text-red-700">忘记了 ❌</span>
-                  <span className="text-[10px] text-red-500 font-mono mt-1">退回到 Box 1</span>
+                  <span className="text-sm font-bold text-red-700">{uiText("忘记了 ❌")}</span>
+                  <span className="text-[10px] text-red-500 font-mono mt-1">{uiText("退回到 Box 1")}</span>
                 </button>
 
                 <button
@@ -275,8 +277,8 @@ export default function Flashcards({
                   onClick={() => handleReview('hard')}
                   className="flex flex-col items-center justify-center p-3.5 bg-orange-50 hover:bg-orange-100 border border-orange-200 hover:border-orange-300 rounded-2xl transition cursor-pointer text-center group"
                 >
-                  <span className="text-sm font-bold text-orange-700">太费劲 ⚠️</span>
-                  <span className="text-[10px] text-orange-500 font-mono mt-1">保持现级 复习加速</span>
+                  <span className="text-sm font-bold text-orange-700">{uiText("太费劲 ⚠️")}</span>
+                  <span className="text-[10px] text-orange-500 font-mono mt-1">{uiText("保持现级 复习加速")}</span>
                 </button>
 
                 <button
@@ -284,8 +286,8 @@ export default function Flashcards({
                   onClick={() => handleReview('good')}
                   className="flex flex-col items-center justify-center p-3.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 hover:border-amber-300 rounded-2xl transition cursor-pointer text-center group"
                 >
-                  <span className="text-sm font-bold text-amber-700">认出了 👍</span>
-                  <span className="text-[10px] text-amber-500 font-mono mt-1">晋级 Box + 1</span>
+                  <span className="text-sm font-bold text-amber-700">{uiText("认出了 👍")}</span>
+                  <span className="text-[10px] text-amber-500 font-mono mt-1">{uiText("晋级 Box + 1")}</span>
                 </button>
 
                 <button
@@ -293,8 +295,8 @@ export default function Flashcards({
                   onClick={() => handleReview('easy')}
                   className="flex flex-col items-center justify-center p-3.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 hover:border-emerald-300 rounded-2xl transition cursor-pointer text-center group"
                 >
-                  <span className="text-sm font-bold text-emerald-700">秒答太易 🎓</span>
-                  <span className="text-[10px] text-emerald-500 font-mono mt-1">直达 Box 5 (Mastered)</span>
+                  <span className="text-sm font-bold text-emerald-700">{uiText("秒答太易 🎓")}</span>
+                  <span className="text-[10px] text-emerald-500 font-mono mt-1">{uiText("直达 Box 5 (Mastered)")}</span>
                 </button>
               </div>
             </div>
@@ -305,14 +307,14 @@ export default function Flashcards({
                 onClick={() => setIsFlipped(true)}
                 className="w-1/2 py-3 px-4 bg-stone-900 hover:bg-stone-850 rounded-xl text-xs font-medium text-white transition text-center shadow-xs cursor-pointer"
               >
-                翻转卡片 (查看答案)
+                {uiText("翻转卡片 (查看答案)")}
               </button>
               <button
                 id="btn-skip-card"
                 onClick={handleSkip}
                 className="w-1/2 py-3 px-4 bg-stone-100 hover:bg-stone-200 rounded-xl text-xs font-medium text-stone-600 transition text-center cursor-pointer"
               >
-                跳过此词
+                {uiText("跳过此词")}
               </button>
             </div>
           )}
@@ -321,9 +323,9 @@ export default function Flashcards({
           <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200/50 flex items-start gap-3">
             <HelpCircle className="h-4 w-4 text-stone-400 shrink-0 mt-0.5" />
             <div className="text-[11px] text-stone-500 leading-relaxed space-y-1">
-              <p className="font-semibold text-stone-700">什么是莱特纳系统 (Leitner System)？</p>
+              <p className="font-semibold text-stone-700">{uiText("什么是莱特纳系统 (Leitner System)？")}</p>
               <p>
-                这是一个经典的高效 Spaced Repetition 间隔复习法。所有新学单词都在 <b>Box 1</b>。当你回答“认出了”或“简单”，它会往上晋级（Box 2, 3... 最终到达 Box 5）；而一旦回答“忘记了”，单词会立刻跌落回 <b>Box 1</b>。高盒子的单词复习频次更低，低盒子频次更高。这能帮你省去 80% 的重复无用功，聚焦在短板记忆！
+                {uiText("这是一个经典的高效 Spaced Repetition 间隔复习法。所有新学单词都在")} <b>Box 1</b>{uiText("。当你回答“认出了”或“简单”，它会往上晋级（Box 2, 3... 最终到达 Box 5）；而一旦回答“忘记了”，单词会立刻跌落回")} <b>Box 1</b>{uiText("。高盒子的单词复习频次更低，低盒子频次更高。这能帮你省去 80% 的重复无用功，聚焦在短板记忆！")}
               </p>
             </div>
           </div>

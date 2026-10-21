@@ -1,3 +1,4 @@
+import { uiText, useLanguage } from "../lib/language";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -43,6 +44,7 @@ export default function AIAssistant({
   aiHistory,
   onAddHistory
 }: AIAssistantProps) {
+  useLanguage();
   const [activeTab, setActiveTab] = useState<AITab>('mnemonic');
   const [selectedWord, setSelectedWord] = useState<IELTSWord | null>(activeWord);
   const [wordSearchQuery, setWordSearchQuery] = useState('');
@@ -325,15 +327,15 @@ export default function AIAssistant({
           </div>
           <div>
             <h3 className="font-serif font-bold text-stone-900 text-sm">
-              当前交互核心单词：
+              {uiText("当前交互核心单词：")}
               {selectedWord ? (
                 <span className="text-amber-600 ml-1 font-bold select-all">{selectedWord.word}</span>
               ) : (
-                <span className="text-stone-400 ml-1 font-normal">暂未选择单词</span>
+                <span className="text-stone-400 ml-1 font-normal">{uiText("暂未选择单词")}</span>
               )}
             </h3>
             <p className="text-stone-500 text-xs mt-0.5">
-              {selectedWord ? `中文释义: ${selectedWord.chinese} | 音标: ${selectedWord.phonetic}` : '在下方检索或挑选，启动 AI 多维强化记忆'}
+              {selectedWord ? uiText(`中文释义: ${selectedWord.chinese} | 音标: ${selectedWord.phonetic}`) : uiText('在下方检索或挑选，启动 AI 多维强化记忆')}
             </p>
           </div>
         </div>
@@ -344,7 +346,7 @@ export default function AIAssistant({
           <input
             id="ai-word-search"
             type="text"
-            placeholder="搜索词库并关联 AI 辅导..."
+            placeholder={uiText("搜索词库并关联 AI 辅导...")}
             value={wordSearchQuery}
             onChange={(e) => setWordSearchQuery(e.target.value)}
             className="w-full pl-9 pr-8 py-2 bg-stone-50 border border-stone-200 focus:border-amber-500/50 focus:bg-white rounded-xl text-xs transition focus:outline-hidden"
@@ -405,7 +407,7 @@ export default function AIAssistant({
               }`}
             >
               <Icon className="h-4 w-4" />
-              {tab.label}
+              {uiText(tab.label)}
             </button>
           );
         })}
@@ -419,7 +421,7 @@ export default function AIAssistant({
             <Sparkles className="h-5 w-5 text-amber-500 absolute inset-0 m-auto animate-pulse" />
           </div>
           <div className="space-y-1">
-            <h4 className="font-serif font-bold text-stone-850 text-sm">Gemini AI 正在全力运作</h4>
+            <h4 className="font-serif font-bold text-stone-850 text-sm">{uiText("Gemini AI 正在全力运作")}</h4>
             <p className="text-stone-500 text-xs font-mono max-w-sm">{loadingMessage}</p>
           </div>
         </div>
@@ -430,9 +432,9 @@ export default function AIAssistant({
         <div className="bg-red-50 text-red-700 p-4 rounded-2xl border border-red-200 text-xs flex items-start gap-3">
           <AlertCircle className="h-4.5 w-4.5 shrink-0 mt-0.5 text-red-500" />
           <div className="space-y-1">
-            <p className="font-bold">生成失败</p>
-            <p>{error}</p>
-            <p className="text-[10px] text-red-500">提示: 单词可能需要更详细的定义支持，请检查或尝试重新提交。</p>
+            <p className="font-bold">{uiText("生成失败")}</p>
+            <p>{uiText(error)}</p>
+            <p className="text-[10px] text-red-500">{uiText("提示: 单词可能需要更详细的定义支持，请检查或尝试重新提交。")}</p>
           </div>
         </div>
       )}
@@ -445,7 +447,7 @@ export default function AIAssistant({
           {!selectedWord ? (
             <div className="bg-white rounded-3xl p-12 border text-center text-stone-400 text-sm space-y-3">
               <Lightbulb className="h-10 w-10 text-stone-300 mx-auto" />
-              <p>请先在顶部检索并选择一个雅思单词，开启趣味 AI 联想助记法。</p>
+              <p>{uiText("请先在顶部检索并选择一个雅思单词，开启趣味 AI 联想助记法。")}</p>
             </div>
           ) : mnemonicData ? (
             /* Mnemonics Output Cards */
@@ -455,13 +457,13 @@ export default function AIAssistant({
               <div className="md:col-span-2 space-y-5">
                 {/* 1. Etymology Roots */}
                 <div className="bg-white rounded-3xl p-6 border border-stone-200/80 shadow-xs space-y-3">
-                  <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">📐 词源与词根词缀解析</span>
+                  <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">{uiText("📐 词源与词根词缀解析")}</span>
                   <p className="text-stone-700 text-sm leading-relaxed">{mnemonicData.etymology}</p>
                 </div>
 
                 {/* 2. Visual / Sound association */}
                 <div className="bg-white rounded-3xl p-6 border border-stone-200/80 shadow-xs space-y-3">
-                  <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">💡 趣味记忆联想与视觉情境</span>
+                  <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">{uiText("💡 趣味记忆联想与视觉情境")}</span>
                   <p className="text-stone-700 text-sm leading-relaxed">{mnemonicData.association}</p>
                 </div>
 
@@ -470,7 +472,7 @@ export default function AIAssistant({
                   <div className="absolute right-0 bottom-0 translate-x-4 translate-y-4 text-amber-500/10">
                     <Sparkles className="h-24 w-24" />
                   </div>
-                  <span className="text-[10px] font-mono text-amber-600 uppercase tracking-widest block">🏆 黄金一句话神级口诀</span>
+                  <span className="text-[10px] font-mono text-amber-600 uppercase tracking-widest block">{uiText("🏆 黄金一句话神级口诀")}</span>
                   <p className="text-amber-900 text-base font-serif font-bold italic leading-relaxed relative z-10">
                     "{mnemonicData.trick}"
                   </p>
@@ -481,7 +483,7 @@ export default function AIAssistant({
               <div className="space-y-5">
                 {/* Synonyms */}
                 <div className="bg-white rounded-3xl p-6 border border-stone-200/80 shadow-xs space-y-4">
-                  <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">🔗 考官推荐高含金量替换词</span>
+                  <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">{uiText("🔗 考官推荐高含金量替换词")}</span>
                   <div className="space-y-2">
                     {mnemonicData.synonyms.map((syn, idx) => (
                       <div key={idx} className="flex items-center gap-2 text-stone-700 text-xs">
@@ -494,7 +496,7 @@ export default function AIAssistant({
 
                 {/* Collocations */}
                 <div className="bg-white rounded-3xl p-6 border border-stone-200/80 shadow-xs space-y-4">
-                  <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">🎯 雅思常考高频词伙搭配</span>
+                  <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">{uiText("🎯 雅思常考高频词伙搭配")}</span>
                   <div className="space-y-2">
                     {mnemonicData.collocations.map((col, idx) => (
                       <div key={idx} className="flex items-center gap-2 text-stone-700 text-xs">
@@ -511,7 +513,7 @@ export default function AIAssistant({
                   onClick={handleGenerateMnemonic}
                   className="w-full py-2.5 bg-stone-50 hover:bg-stone-100 border text-stone-600 rounded-xl text-xs font-serif font-semibold transition text-center cursor-pointer"
                 >
-                  换一个助记脑洞
+                  {uiText("换一个助记脑洞")}
                 </button>
               </div>
             </div>
@@ -521,9 +523,9 @@ export default function AIAssistant({
                 <Lightbulb className="h-6 w-6" />
               </div>
               <div className="space-y-1">
-                <h4 className="font-serif font-bold text-stone-900 text-sm">为单词 "{selectedWord.word}" 生成联想记忆法</h4>
+                <h4 className="font-serif font-bold text-stone-900 text-sm">{uiText("为单词 \"")}{selectedWord.word}{uiText("\" 生成联想记忆法")}</h4>
                 <p className="text-stone-500 text-xs max-w-sm mx-auto leading-relaxed">
-                  我们将通过 Google Gemini AI 挖掘最巧妙、生动的词源词缀记忆与趣味联想公式，帮你摆脱死记硬背。
+                  {uiText("我们将通过 Google Gemini AI 挖掘最巧妙、生动的词源词缀记忆与趣味联想公式，帮你摆脱死记硬背。")}
                 </p>
               </div>
               <button
@@ -531,7 +533,7 @@ export default function AIAssistant({
                 onClick={handleGenerateMnemonic}
                 className="py-2.5 px-6 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-serif font-bold transition shadow-xs cursor-pointer inline-flex items-center gap-1.5"
               >
-                <Sparkles className="h-4 w-4" /> 激发智能助记卡片
+                <Sparkles className="h-4 w-4" /> {uiText("激发智能助记卡片")}
               </button>
             </div>
           )}
@@ -545,16 +547,16 @@ export default function AIAssistant({
           {/* Word multi-selector panel */}
           <div className="bg-white rounded-3xl p-5 border border-stone-200/80 shadow-xs space-y-4">
             <div className="space-y-1">
-              <h4 className="font-serif font-semibold text-stone-900 text-sm">选择需要合成写作段落的雅思单词</h4>
+              <h4 className="font-serif font-semibold text-stone-900 text-sm">{uiText("选择需要合成写作段落的雅思单词")}</h4>
               <p className="text-stone-500 text-xs leading-relaxed">
-                请勾选 1 至 4 个单词。AI 将以这些单词为核心，在同一篇雅思 Task 2 议论文中生成一个论证段落供学习参考。
+                {uiText("请勾选 1 至 4 个单词。AI 将以这些单词为核心，在同一篇雅思 Task 2 议论文中生成一个论证段落供学习参考。")}
               </p>
             </div>
 
             {/* Selected words wrap tags */}
             {selectedWordsForWriting.length > 0 && (
               <div className="flex flex-wrap gap-1.5 bg-stone-50 p-3 rounded-2xl border border-stone-100">
-                <span className="text-[10px] font-mono text-stone-400 self-center mr-1">已选词:</span>
+                <span className="text-[10px] font-mono text-stone-400 self-center mr-1">{uiText("已选词:")}</span>
                 {selectedWordsForWriting.map(wText => (
                   <div key={wText} className="inline-flex items-center gap-1 bg-amber-500/10 text-amber-800 border border-amber-500/20 px-2 py-0.5 rounded-lg text-xs font-mono">
                     <span>{wText}</span>
@@ -592,14 +594,14 @@ export default function AIAssistant({
             </div>
 
             <div className="pt-3 flex justify-between items-center text-xs text-stone-400">
-              <span>* 想要融合其他生词？请先在主词库中将新词添加进来。</span>
+              <span>{uiText("* 想要融合其他生词？请先在主词库中将新词添加进来。")}</span>
               <button
                 id="btn-trigger-writing"
                 disabled={selectedWordsForWriting.length === 0}
                 onClick={handleGenerateWriting}
                 className="py-2.5 px-6 bg-stone-900 hover:bg-stone-850 disabled:bg-stone-100 disabled:text-stone-400 text-white rounded-xl text-xs font-serif font-bold transition shadow-xs cursor-pointer inline-flex items-center gap-1.5"
               >
-                <FileText className="h-4 w-4" /> 生成写作参考段落
+                <FileText className="h-4 w-4" /> {uiText("生成写作参考段落")}
               </button>
             </div>
           </div>
@@ -611,7 +613,7 @@ export default function AIAssistant({
               <div className="md:col-span-2 bg-white rounded-3xl p-6 border border-stone-200/80 shadow-xs space-y-5">
                 <div className="space-y-1">
                   <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">
-                    ✍️ 官方作文模拟题目 ({writingData.topicName})
+                    {uiText("✍️ 官方作文模拟题目 (")}{writingData.topicName})
                   </span>
                   <h4 className="font-serif font-bold text-stone-900 text-base leading-snug">
                     "{writingData.essayPrompt}"
@@ -621,12 +623,12 @@ export default function AIAssistant({
                 <div className="space-y-2 border-t border-stone-100 pt-4">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-mono text-amber-600 uppercase tracking-widest block">
-                      💯 考官高分范本段落 (Academic Essay Paragraph)
+                      {uiText("💯 考官高分范本段落 (Academic Essay Paragraph)")}
                     </span>
                     <button 
                       onClick={() => handleSpeak(writingData.paragraph)}
                       className="p-1 text-stone-400 hover:text-amber-500"
-                      title="段落朗读"
+                      title={uiText("段落朗读")}
                     >
                       <Volume2 className="h-4.5 w-4.5" />
                     </button>
@@ -639,7 +641,7 @@ export default function AIAssistant({
 
                 <div className="space-y-2 border-t border-stone-100 pt-4">
                   <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">
-                    🇨🇳 段落中文释义
+                    {uiText("🇨🇳 段落中文释义")}
                   </span>
                   <p className="text-stone-600 text-xs leading-relaxed">
                     {writingData.translation}
@@ -651,7 +653,7 @@ export default function AIAssistant({
               <div className="bg-stone-950 text-white rounded-3xl p-6 border border-stone-800 shadow-md flex flex-col justify-between">
                 <div className="space-y-4">
                   <span className="text-[10px] font-mono text-amber-400 uppercase tracking-widest block">
-                    👨‍🏫 考官高分语境解析
+                    {uiText("👨‍🏫 考官高分语境解析")}
                   </span>
                   <p className="text-stone-300 text-xs leading-relaxed whitespace-pre-wrap">
                     {writingData.tips}
@@ -663,7 +665,7 @@ export default function AIAssistant({
                     onClick={() => handleCopyToClipboard(writingData.paragraph)}
                     className="flex-1 py-2 px-3 bg-stone-900 hover:bg-stone-850 text-stone-300 rounded-xl text-xs font-medium transition flex items-center justify-center gap-1 cursor-pointer border border-stone-800"
                   >
-                    <Copy className="h-3.5 w-3.5" /> 复制英文范本
+                    <Copy className="h-3.5 w-3.5" /> {uiText("复制英文范本")}
                   </button>
                 </div>
               </div>
@@ -679,7 +681,7 @@ export default function AIAssistant({
           {!selectedWord ? (
             <div className="bg-white rounded-3xl p-12 border text-center text-stone-400 text-sm space-y-3">
               <Mic className="h-10 w-10 text-stone-300 mx-auto" />
-              <p>请先在顶部检索并选择一个雅思单词，开启口语考场真题模拟。</p>
+              <p>{uiText("请先在顶部检索并选择一个雅思单词，开启口语考场真题模拟。")}</p>
             </div>
           ) : speakingData ? (
             /* Speaking Mock Outputs */
@@ -689,7 +691,7 @@ export default function AIAssistant({
               <div className="md:col-span-2 bg-white rounded-3xl p-6 border border-stone-200/80 shadow-xs space-y-5">
                 <div className="space-y-1">
                   <span className="text-[10px] font-mono text-amber-600 uppercase tracking-widest block">
-                    🗣️ 口语考官提问 ({speakingData.part})
+                    {uiText("🗣️ 口语考官提问 (")}{speakingData.part})
                   </span>
                   <div className="flex items-center justify-between bg-stone-50 p-4 rounded-xl border border-stone-100">
                     <h4 className="font-serif font-bold text-stone-900 text-sm select-all">
@@ -707,7 +709,7 @@ export default function AIAssistant({
                 <div className="space-y-2 border-t border-stone-100 pt-4">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-mono text-emerald-600 uppercase tracking-widest block">
-                      🎤 AI 口语回答参考
+                      {uiText("🎤 AI 口语回答参考")}
                     </span>
                     <div className="flex items-center gap-2">
                       <button
@@ -719,12 +721,12 @@ export default function AIAssistant({
                         }`}
                         title={hideSpeakingTranslation ? "切换显示中文翻译对照" : "切换为纯英文整段原文显示"}
                       >
-                        {hideSpeakingTranslation ? '📄 整段原文(不翻译)' : '📖 显示对照翻译'}
+                        {hideSpeakingTranslation ? uiText('📄 整段原文(不翻译)') : uiText('📖 显示对照翻译')}
                       </button>
                       <button 
                         onClick={() => handleSpeak(speakingData.answer)}
                         className="p-1.5 text-stone-400 hover:text-emerald-500 bg-stone-50 border border-stone-200 rounded-lg transition cursor-pointer"
-                        title="朗读答案"
+                        title={uiText("朗读答案")}
                       >
                         <Volume2 className="h-4.5 w-4.5" />
                       </button>
@@ -738,7 +740,7 @@ export default function AIAssistant({
                 {!hideSpeakingTranslation && (
                   <div className="space-y-2 border-t border-stone-100 pt-4 animate-fade-in">
                     <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block">
-                      🇨🇳 答卷中文翻译
+                      {uiText("🇨🇳 答卷中文翻译")}
                     </span>
                     <p className="text-stone-600 text-xs leading-relaxed">
                       {speakingData.translation}
@@ -751,7 +753,7 @@ export default function AIAssistant({
               <div className="bg-white rounded-3xl p-6 border border-stone-200/80 shadow-xs flex flex-col justify-between">
                 <div className="space-y-4">
                   <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block font-bold">
-                    💡 口语高分表达技巧与连读建议
+                    {uiText("💡 口语高分表达技巧与连读建议")}
                   </span>
                   <p className="text-stone-600 text-xs leading-relaxed whitespace-pre-wrap">
                     {speakingData.coaching}
@@ -763,14 +765,14 @@ export default function AIAssistant({
                     onClick={() => handleCopyToClipboard(speakingData.answer)}
                     className="w-full py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-medium transition flex items-center justify-center gap-1 cursor-pointer"
                   >
-                    <Copy className="h-3.5 w-3.5" /> 复制示范答案
+                    <Copy className="h-3.5 w-3.5" /> {uiText("复制示范答案")}
                   </button>
                   <button
                     id="btn-rerun-speaking"
                     onClick={handleGenerateSpeaking}
                     className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-serif font-bold transition flex items-center justify-center gap-1 cursor-pointer shadow-xs"
                   >
-                    换一个口语提问场景
+                    {uiText("换一个口语提问场景")}
                   </button>
                 </div>
               </div>
@@ -782,9 +784,9 @@ export default function AIAssistant({
                 <Mic className="h-6 w-6" />
               </div>
               <div className="space-y-1">
-                <h4 className="font-serif font-bold text-stone-900 text-sm">为单词 "{selectedWord.word}" 开启雅思口语实战模拟</h4>
+                <h4 className="font-serif font-bold text-stone-900 text-sm">{uiText("为单词 \"")}{selectedWord.word}{uiText("\" 开启雅思口语实战模拟")}</h4>
                 <p className="text-stone-500 text-xs max-w-sm mx-auto leading-relaxed">
-                  模拟口语 Part 1 独立陈述或 Part 3 深度论证，听音跟读满分口语答案，纠正发音，训练即时口语反应能力。
+                  {uiText("模拟口语 Part 1 独立陈述或 Part 3 深度论证，听音跟读满分口语答案，纠正发音，训练即时口语反应能力。")}
                 </p>
               </div>
               <button
@@ -792,7 +794,7 @@ export default function AIAssistant({
                 onClick={handleGenerateSpeaking}
                 className="py-2.5 px-6 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-serif font-bold transition shadow-xs cursor-pointer inline-flex items-center gap-1.5"
               >
-                <Sparkles className="h-4 w-4" /> 开启口语真题模拟
+                <Sparkles className="h-4 w-4" /> {uiText("开启口语真题模拟")}
               </button>
             </div>
           )}
@@ -805,29 +807,29 @@ export default function AIAssistant({
           {!selectedWord ? (
             <div className="bg-white rounded-3xl p-12 border text-center text-stone-400 text-sm space-y-3">
               <MessageSquare className="h-10 w-10 text-stone-300 mx-auto" />
-              <p>请先在顶部检索并选择一个雅思单词，以便向 AI 导师提问。</p>
+              <p>{uiText("请先在顶部检索并选择一个雅思单词，以便向 AI 导师提问。")}</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
               
               {/* Word info panel */}
               <div className="lg:col-span-1 bg-white rounded-3xl p-5 border border-stone-200/80 shadow-xs space-y-4 text-xs h-fit">
-                <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block font-bold">📖 讨论单词卡片</span>
+                <span className="text-[10px] font-mono text-stone-400 uppercase tracking-widest block font-bold">{uiText("📖 讨论单词卡片")}</span>
                 <div>
                   <h4 className="font-serif font-bold text-stone-900 text-base">{selectedWord.word}</h4>
                   <p className="text-stone-500 font-mono text-[10px] mt-0.5">{selectedWord.partOfSpeech} • {selectedWord.phonetic}</p>
                 </div>
                 <div className="space-y-1 text-stone-600">
-                  <p><b>中文释义:</b> {selectedWord.chinese}</p>
-                  <p><b>英文释义:</b> {selectedWord.definition}</p>
+                  <p><b>{uiText("中文释义:")}</b> {selectedWord.chinese}</p>
+                  <p><b>{uiText("英文释义:")}</b> {selectedWord.definition}</p>
                 </div>
                 <div className="pt-3 border-t border-stone-100">
-                  <p className="font-semibold text-stone-700">你可以提问以下方向：</p>
+                  <p className="font-semibold text-stone-700">{uiText("你可以提问以下方向：")}</p>
                   <ul className="list-disc pl-4 mt-1.5 space-y-1 text-stone-500">
-                    <li>这个词常用来搭配什么介词？</li>
-                    <li>它和同义词有什么区别？</li>
-                    <li>能在雅思听力中告诉我注意什么？</li>
-                    <li>请给我三个高分英文写作例句</li>
+                    <li>{uiText("这个词常用来搭配什么介词？")}</li>
+                    <li>{uiText("它和同义词有什么区别？")}</li>
+                    <li>{uiText("能在雅思听力中告诉我注意什么？")}</li>
+                    <li>{uiText("请给我三个高分英文写作例句")}</li>
                   </ul>
                 </div>
               </div>
@@ -837,9 +839,9 @@ export default function AIAssistant({
                 {/* Chat header */}
                 <div className="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between text-xs text-stone-500">
                   <span className="flex items-center gap-1.5 font-serif font-semibold text-stone-850">
-                    <MessageSquare className="h-4 w-4 text-amber-500" /> AI 词汇答疑导师 Workspace
+                    <MessageSquare className="h-4 w-4 text-amber-500" /> {uiText("AI 词汇答疑导师 Workspace")}
                   </span>
-                  <span>在线答疑中</span>
+                  <span>{uiText("在线答疑中")}</span>
                 </div>
 
                 {/* Messages Panel */}
@@ -847,8 +849,8 @@ export default function AIAssistant({
                   {chatMessages.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center text-stone-400 text-xs space-y-2 text-center max-w-sm mx-auto">
                       <Sparkles className="h-8 w-8 text-amber-500 animate-pulse" />
-                      <p className="font-serif font-bold text-stone-800">雅思词汇疑难解答室</p>
-                      <p>你可以询问关于单词 <b>{selectedWord.word}</b> 的任何学术疑问。比如：“它和另一个近义词有什么语境区别？”</p>
+                      <p className="font-serif font-bold text-stone-800">{uiText("雅思词汇疑难解答室")}</p>
+                      <p>{uiText("你可以询问关于单词")} <b>{selectedWord.word}</b> {uiText("的任何学术疑问。比如：“它和另一个近义词有什么语境区别？”")}</p>
                     </div>
                   ) : (
                     chatMessages.map((msg, idx) => {
@@ -877,7 +879,7 @@ export default function AIAssistant({
                         <div className="h-1.5 w-1.5 bg-stone-400 rounded-full animate-bounce"></div>
                         <div className="h-1.5 w-1.5 bg-stone-400 rounded-full animate-bounce delay-75"></div>
                         <div className="h-1.5 w-1.5 bg-stone-400 rounded-full animate-bounce delay-150"></div>
-                        <span>导师正在精心解答中...</span>
+                        <span>{uiText("导师正在精心解答中...")}</span>
                       </div>
                     </div>
                   )}

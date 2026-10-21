@@ -1,3 +1,4 @@
+import { uiText, useLanguage } from "./lib/language";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.5
@@ -17,7 +18,9 @@ import {
   Settings,
   KeyRound,
   HelpCircle,
-  FolderSync
+  FolderSync,
+  MessageCircle,
+  Ellipsis
 } from 'lucide-react';
 import { presetVocabulary } from './data/vocabulary';
 import { IELTSWord, WordProgress, DailyStats, AISessionHistory, WordCategory } from './types';
@@ -32,6 +35,7 @@ import Flashcards from './components/Flashcards';
 import QuizEngine from './components/QuizEngine';
 import AIAssistant from './components/AIAssistant';
 import AccountModal from './components/AccountModal';
+import LanguageSwitch from './components/LanguageSwitch';
 
 interface AppProps {
   user: PublicUser;
@@ -39,7 +43,19 @@ interface AppProps {
   onUserChanged: (u: PublicUser) => void;
 }
 
+const PRIMARY_NAVIGATION = [
+  { id: 'dashboard', label: '今日口语', icon: MessageCircle },
+  { id: 'materials', label: '场景材料', icon: FolderSync },
+  { id: 'wordlist', label: '我的积累', icon: BookOpen },
+  { id: 'flashcards', label: '复习', icon: Bookmark },
+];
+const STUDY_TOOLS = [
+  { id: 'quizzes', label: '词汇自测', icon: Award },
+  { id: 'ai-coach', label: 'AI 学习辅导', icon: Sparkles },
+];
+
 export default function App({ user, onLogout, onUserChanged }: AppProps) {
+  useLanguage();
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [vocabulary, setVocabulary] = useState<IELTSWord[]>([]);
   const [progress, setProgress] = useState<Record<string, WordProgress>>({});
@@ -50,6 +66,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
   const [activeWordForAI, setActiveWordForAI] = useState<IELTSWord | null>(null);
   const [tracedMaterialId, setTracedMaterialId] = useState<string | null>(null);
   const [tracedWord, setTracedWord] = useState<string | null>(null);
+  const [sceneEntry, setSceneEntry] = useState<{ domain: string; scene?: string } | null>(null);
   
   // Mobile menu control
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -523,7 +540,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-850 font-sans flex flex-col selection:bg-amber-200">
+    <div className="learner-app min-h-screen text-stone-850 font-sans flex flex-col selection:bg-amber-200">
       
       {/* Top Academic Elegant Navigation Header */}
       <header className="bg-white border-b border-stone-200/80 sticky top-0 z-40 shadow-xs" id="app-header">
@@ -531,26 +548,19 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
           <div className="flex justify-between h-16 items-center">
             
             {/* Logo / Title */}
-            <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('dashboard')}>
-              <div className="bg-stone-900 text-amber-400 p-2 rounded-xl flex items-center justify-center border border-stone-850">
+            <button type="button" aria-label={uiText("回到今日口语")} className="flex min-w-0 items-center gap-2.5 text-left sm:gap-3" onClick={() => setActiveTab('dashboard')}>
+              <div className="shrink-0 bg-stone-900 text-amber-400 p-2 rounded-xl flex items-center justify-center border border-stone-850">
                 <Brain className="h-5 w-5" />
               </div>
-              <div className="text-left">
-                <span className="text-lg font-serif font-bold text-stone-900 block tracking-tight">IELTS Vocabulary Builder</span>
-                <span className="text-[10px] font-mono text-stone-400 block uppercase tracking-widest">雅思词汇记背伴侣 v2.5</span>
+              <div className="min-w-0 text-left">
+                <span className="block truncate font-serif text-base font-bold tracking-tight text-stone-900 sm:text-lg">{uiText("英语 · 场景口语")}</span>
+                <span className="mt-0.5 block text-[9px] uppercase tracking-[.18em] text-stone-400">LIFE INTO WORDS · IELTS</span>
               </div>
-            </div>
+            </button>
 
             {/* Desktop Navigation */}
-            <nav className="hidden md:flex items-center space-x-1.5 text-xs font-semibold">
-              {[
-                { id: 'dashboard', label: '我的看板', icon: TrendingUp },
-                { id: 'wordlist', label: '我的词书', icon: BookOpen },
-                { id: 'materials', label: '学习材料', icon: FolderSync },
-                { id: 'flashcards', label: '记忆闪卡', icon: Bookmark },
-                { id: 'quizzes', label: '多维自测', icon: Award },
-                { id: 'ai-coach', label: 'AI 辅导中心', icon: Sparkles },
-              ].map((tab) => {
+            <nav aria-label={uiText("主导航")} className="hidden lg:flex items-center space-x-1 text-xs font-semibold">
+              {PRIMARY_NAVIGATION.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
                 return (
@@ -559,35 +569,34 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
                     id={`nav-btn-${tab.id}`}
                     onClick={() => {
                       setActiveTab(tab.id);
+                      if (tab.id === 'materials') { setSceneEntry(null); setTracedMaterialId(null); setTracedWord(null); }
                       if (tab.id !== 'ai-coach') setActiveWordForAI(null);
                     }}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition cursor-pointer ${
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`flex items-center gap-2 whitespace-nowrap px-3 py-2.5 rounded-xl transition cursor-pointer ${
                       isActive 
-                        ? 'bg-stone-900 text-white shadow-xs' 
+                        ? 'bg-[#e7ede4] text-[#33472f]'
                         : 'text-stone-500 hover:text-stone-900 hover:bg-stone-100'
                     }`}
                   >
                     <Icon className={`h-4 w-4 ${isActive && tab.id === 'ai-coach' ? 'text-amber-400 animate-pulse' : ''}`} />
-                    {tab.label}
+                    {uiText(tab.label)}
                   </button>
                 );
               })}
             </nav>
 
             {/* Quick Stats Summary Right Section */}
-            <div className="flex items-center gap-3">
-              {user.isAdmin && <a href="/admin.html" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">管理材料</a>}
-              <div className="hidden sm:flex items-center gap-1 bg-stone-100 border px-3 py-1.5 rounded-full text-xs font-mono font-medium text-stone-600">
-                <Flame className="h-4 w-4 text-amber-500" />
-                <span>{streak} 天</span>
-              </div>
+            <div className="flex shrink-0 items-center gap-1 sm:gap-3">
+              <LanguageSwitch />
+              <details className="relative hidden lg:block"><summary aria-label={uiText("学习工具")} className="flex cursor-pointer list-none items-center gap-1 rounded-lg px-2 py-2 text-xs text-stone-500"><Ellipsis className="h-4 w-4" />{uiText("工具")}</summary><div className="absolute right-0 top-full z-50 mt-2 w-44 space-y-1 rounded-xl border border-stone-200 bg-white p-2 shadow-lg">{STUDY_TOOLS.map(tab => <button key={tab.id} aria-current={activeTab === tab.id ? 'page' : undefined} onClick={event => { setActiveTab(tab.id); event.currentTarget.closest('details')?.removeAttribute('open'); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-stone-600 hover:bg-stone-100"><tab.icon className="h-4 w-4" />{uiText(tab.label)}</button>)}{user.isAdmin && <a href="/admin.html" className="block border-t border-stone-100 px-3 py-2 text-xs text-stone-500">{uiText("管理员工作台 ↗")}</a>}</div></details>
 
               {/* Settings Trigger */}
               <button
                 id="btn-trigger-settings"
                 onClick={() => setIsSettingsOpen(true)}
                 className="p-2 text-stone-500 hover:text-stone-900 bg-stone-50 border border-stone-200 hover:bg-stone-100 rounded-xl transition cursor-pointer"
-                title="账号与设置"
+                title={uiText("账号与设置")}
               >
                 <Settings className="h-4 w-4" />
               </button>
@@ -596,7 +605,9 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
               <button
                 id="btn-mobile-menu-toggle"
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="p-2 text-stone-500 hover:text-stone-950 md:hidden transition cursor-pointer"
+                aria-label={uiText(isMobileMenuOpen ? '关闭导航菜单' : '打开导航菜单')}
+                aria-expanded={isMobileMenuOpen}
+                className="p-2 text-stone-500 hover:text-stone-950 lg:hidden transition cursor-pointer"
               >
                 {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </button>
@@ -608,15 +619,8 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
 
       {/* Mobile Navigation Drawer */}
       {isMobileMenuOpen && (
-        <div className="md:hidden bg-white border-b border-stone-200 py-3 px-4 space-y-1 animate-fade-in z-30" id="mobile-nav">
-          {[
-            { id: 'dashboard', label: '我的看板', icon: TrendingUp },
-            { id: 'wordlist', label: '我的词书', icon: BookOpen },
-            { id: 'materials', label: '学习材料', icon: FolderSync },
-            { id: 'flashcards', label: '记忆闪卡', icon: Bookmark },
-            { id: 'quizzes', label: '多维自测', icon: Award },
-            { id: 'ai-coach', label: 'AI 辅导中心', icon: Sparkles },
-          ].map((tab) => {
+        <nav aria-label={uiText("手机导航")} className="lg:hidden bg-white border-b border-stone-200 py-3 px-4 space-y-1 animate-fade-in z-30" id="mobile-nav">
+          {[...PRIMARY_NAVIGATION, ...STUDY_TOOLS].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
             return (
@@ -625,6 +629,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
                 id={`mobile-nav-btn-${tab.id}`}
                 onClick={() => {
                   setActiveTab(tab.id);
+                  if (tab.id === 'materials') { setSceneEntry(null); setTracedMaterialId(null); setTracedWord(null); }
                   setIsMobileMenuOpen(false);
                   if (tab.id !== 'ai-coach') setActiveWordForAI(null);
                 }}
@@ -635,26 +640,27 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
                 }`}
               >
                 <Icon className="h-4.5 w-4.5" />
-                {tab.label}
+                {uiText(tab.label)}
               </button>
             );
           })}
-        </div>
+          {user.isAdmin && <a href="/admin.html" className="block border-t border-stone-100 px-4 py-3 text-xs text-stone-500">{uiText("管理员工作台 ↗")}</a>}
+        </nav>
       )}
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative">
 
         {/* AI 未配置提示条 */}
-        {!user.llmConfigured && (
+        {!user.llmConfigured && activeTab === 'ai-coach' && (
           <button
             onClick={() => setIsSettingsOpen(true)}
             className="w-full mb-5 flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-amber-50 border border-amber-200 text-left text-xs text-amber-900 hover:bg-amber-100 transition cursor-pointer"
           >
             <KeyRound className="h-4 w-4 shrink-0 text-amber-600" />
             <span>
-              AI 功能未配置：点击这里在「账号与设置 → AI 大模型」填写你自己的 API Key（如 DeepSeek），即可使用 AI 助教、翻译、总结等功能。
-              <span className="ml-1 font-semibold underline underline-offset-2">去配置 →</span>
+              {uiText("AI 功能未配置：点击这里在「账号与设置 → AI 大模型」填写你自己的 API Key（如 DeepSeek），即可使用 AI 助教、翻译、总结等功能。")}
+              <span className="ml-1 font-semibold underline underline-offset-2">{uiText("去配置 →")}</span>
             </span>
           </button>
         )}
@@ -666,8 +672,11 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
             stats={stats}
             dailyGoal={dailyGoal}
             streak={streak}
+            onOpenMaterial={id => { setTracedMaterialId(id); setTracedWord(null); setSceneEntry(null); setActiveTab('materials'); }}
+            onBrowseScene={(domain, scene) => { setSceneEntry({ domain, scene }); setTracedMaterialId(null); setTracedWord(null); setActiveTab('materials'); }}
             onNavigate={(tab) => {
               setActiveTab(tab);
+              if (tab === 'materials') { setSceneEntry(null); setTracedMaterialId(null); setTracedWord(null); }
               if (tab !== 'ai-coach') setActiveWordForAI(null);
             }}
           />
@@ -683,6 +692,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
             onDeleteWord={handleDeleteWord}
             onSelectWordForAI={handleSelectWordForAI}
             onTraceMaterial={(matId, wordText) => {
+              setSceneEntry(null);
               setTracedMaterialId(matId);
               if (wordText) setTracedWord(wordText);
               setActiveTab('materials');
@@ -692,6 +702,7 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
 
         {activeTab === 'materials' && (
           <MaterialsLibrary 
+            initialSceneFilter={sceneEntry}
             vocabulary={vocabulary}
             onAddCustomWord={handleAddCustomWord}
             initialMaterialId={tracedMaterialId}
@@ -738,8 +749,8 @@ export default function App({ user, onLogout, onUserChanged }: AppProps) {
       {/* Footer */}
       <footer className="bg-white border-t border-stone-200/80 py-6 text-center text-xs font-mono text-stone-400 mt-auto">
         <div className="max-w-7xl mx-auto px-4">
-          <p>IELTS Vocabulary Builder © 2026. Designed with Ivory-Slate Aesthetics.</p>
-          <p className="mt-1 text-[10px] text-stone-300">Spaced Repetition Engine · 每账号自带大模型 Key</p>
+          <p>{uiText("英语 · 场景口语")}</p>
+          <p className="mt-2 text-[10px] text-stone-400">{uiText("从真实材料积累表达，带回自己的生活。")}</p>
         </div>
       </footer>
 

@@ -1,3 +1,4 @@
+import { uiText, useLanguage } from "./lib/language";
 /**
  * 根门卫：
  * 1. 启动时询问 /api/auth/me；
@@ -16,14 +17,16 @@ import { apiMe, apiSnapshot, apiLogout, PublicUser } from './lib/authApi';
 import { clearLocalEntries, countLocalEntries, getLastAccount, setLastAccount, writeLocalEntries } from './lib/localData';
 import { disableSync, enableSync, flushAll, getPendingEntries, pushLocalAllToServer, setHydrating } from './lib/sync';
 import './index.css';
+import LanguageSwitch from './components/LanguageSwitch';
 
 function Splash({ message }: { message: string }) {
   return (
     <div className="min-h-screen bg-stone-100 flex flex-col items-center justify-center gap-3 font-sans">
+      <div className="absolute right-4 top-4"><LanguageSwitch /></div>
       <div className="w-12 h-12 rounded-2xl bg-stone-900 text-amber-400 flex items-center justify-center animate-pulse">
         <span className="text-xl">🎓</span>
       </div>
-      <p className="text-xs text-stone-500">{message}</p>
+      <p className="text-xs text-stone-500">{uiText(message)}</p>
     </div>
   );
 }
@@ -33,6 +36,7 @@ function accountKey(u: PublicUser): string {
 }
 
 function Root() {
+  useLanguage();
   const [user, setUser] = useState<PublicUser | null | undefined>(undefined); // undefined = 启动中
   const [fatal, setFatal] = useState('');
   const [syncError, setSyncError] = useState('');
@@ -150,7 +154,7 @@ function Root() {
   if (fatal) {
     return (
       <div className="min-h-screen bg-stone-100 flex flex-col items-center justify-center gap-3 font-sans">
-        <p className="text-sm text-stone-600">⚠️ {fatal}</p>
+        <p className="text-sm text-stone-600">⚠️ {uiText(fatal)}</p>
         <button
           onClick={() => {
             runningRef.current = false;
@@ -159,14 +163,14 @@ function Root() {
           }}
           className="px-4 py-2 bg-stone-900 text-white text-xs rounded-xl cursor-pointer"
         >
-          重试
+          {uiText("重试")}
         </button>
       </div>
     );
   }
 
   if (user === undefined) {
-    return <Splash message="正在连接服务器…" />;
+    return <Splash message={uiText("正在连接服务器…")} />;
   }
 
   if (user === null) {
@@ -177,8 +181,8 @@ function Root() {
     <>
       {(syncError || pendingCount > 0) && (
         <div role="status" className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-sm text-amber-900">
-          {syncError || `有 ${pendingCount} 项更改正在等待同步，请暂时保留本机数据。`}
-          <button className="ml-3 underline" onClick={() => { void flushAll(); }}>重试同步</button>
+          {uiText(syncError) || uiText(`有 ${pendingCount} 项更改正在等待同步，请暂时保留本机数据。`)}
+          <button className="ml-3 underline" onClick={() => { void flushAll(); }}>{uiText("重试同步")}</button>
         </div>
       )}
       <App
