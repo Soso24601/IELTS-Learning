@@ -110,8 +110,6 @@
 .auth-data-note { margin-top:28px; }
 }
 .auth-input-body input:autofill + label { transform:translateY(-13px) scale(.74); }
-@font-face { font-family:"Speak Display"; src:url('/fonts/auth-display.ttf') format('truetype'); font-weight:800; font-style:normal; font-display:swap; }
-@font-face { font-family:"Speak Text"; src:url('/fonts/auth-display-regular.ttf') format('truetype'); font-weight:400; font-style:normal; font-display:swap; }
 @font-face { font-family:"Speak Chinese"; src:url('/fonts/auth-chinese-regular.ttf') format('truetype'); font-weight:400; font-style:normal; font-display:swap; }
 @font-face { font-family:"Speak Chinese"; src:url('/fonts/auth-chinese-bold.ttf') format('truetype'); font-weight:700; font-style:normal; font-display:swap; }
 @font-face { font-family:"Speak Chinese"; src:url('/fonts/auth-chinese.ttf') format('truetype'); font-weight:900; font-style:normal; font-display:swap; }

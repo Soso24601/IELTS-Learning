@@ -1,3 +1,4 @@
+import ChoiceSelect from './ChoiceSelect';
 import { SceneArt, domainArt } from './Brand';
 import { uiText, useLanguage } from "../lib/language";
 /**
@@ -1914,8 +1915,8 @@ export default function MaterialsLibrary({
       {!activeMaterial && <section aria-label={uiText("生活场景浏览")} className="ui-filter-panel space-y-4">
         <div className="flex items-center justify-between gap-3"><h3 className="ui-section-title">{uiText("选择一个场景")}</h3><button type="button" onClick={() => { setSelectedDomain(''); setSelectedScene(''); setSelectedPractice(''); setSelectedUse(''); setSelectedTopic(''); setMaterialSearch(''); setMaterialType('all'); }} className="shrink-0 text-xs text-stone-500 underline underline-offset-4">{uiText("清除筛选")}</button></div>
         <div className="grid gap-3 md:grid-cols-[1fr_1fr_1.2fr]">
-          <label className="text-xs font-semibold text-stone-500">{uiText("生活领域")}<select aria-label={uiText("按生活领域筛选")} value={selectedDomain} onChange={event => { setSelectedDomain(event.target.value); setSelectedScene(''); }} className="mt-2 w-full rounded-xl border border-stone-200 bg-[#faf9f6] p-3 text-sm text-stone-800"><option value="">{uiText("全部生活领域")}</option><option value="unclassified">{uiText("其他材料（待分类）")}</option>{SCENE_DOMAINS.map(item => <option key={item.name} value={item.name}>{uiText(item.name)}</option>)}</select></label>
-          <label className="text-xs font-semibold text-stone-500">{uiText("具体场景")}<select aria-label={uiText("按具体场景筛选")} value={selectedScene} disabled={!selectedDomain || selectedDomain === 'unclassified'} onChange={event => setSelectedScene(event.target.value)} className="mt-2 w-full rounded-xl border border-stone-200 bg-[#faf9f6] p-3 text-sm text-stone-800 disabled:opacity-50"><option value="">{uiText("全部具体场景")}</option>{scenesInDomain(selectedDomain).map(item => <option key={item} value={item}>{uiText(item)}</option>)}</select></label>
+          <label className="text-xs font-semibold text-stone-500">{uiText("生活领域")}<ChoiceSelect aria-label={uiText("按生活领域筛选")} value={selectedDomain} onValueChange={value => { setSelectedDomain(value); setSelectedScene(''); }} className="mt-2 w-full rounded-xl border border-stone-200 bg-[#faf9f6] p-3 text-sm text-stone-800"><option value="">{uiText("全部生活领域")}</option><option value="unclassified">{uiText("其他材料（待分类）")}</option>{SCENE_DOMAINS.map(item => <option key={item.name} value={item.name}>{uiText(item.name)}</option>)}</ChoiceSelect></label>
+          <label className="text-xs font-semibold text-stone-500">{uiText("具体场景")}<ChoiceSelect aria-label={uiText("按具体场景筛选")} value={selectedScene} disabled={!selectedDomain || selectedDomain === 'unclassified'} onValueChange={value => setSelectedScene(value)} className="mt-2 w-full rounded-xl border border-stone-200 bg-[#faf9f6] p-3 text-sm text-stone-800 disabled:opacity-50"><option value="">{uiText("全部具体场景")}</option>{scenesInDomain(selectedDomain).map(item => <option key={item} value={item}>{uiText(item)}</option>)}</ChoiceSelect></label>
           <label className="text-xs font-semibold text-stone-500">{uiText("搜索材料")}<span className="mt-2 flex items-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-3"><Search className="h-4 w-4 shrink-0 text-stone-400"/><input aria-label={uiText("搜索学习材料")} value={materialSearch} onChange={event => setMaterialSearch(event.target.value)} placeholder={uiText("标题、场景或想学的表达")} className="min-w-0 w-full bg-transparent text-sm font-normal outline-none"/></span></label>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 pt-3">
@@ -1925,9 +1926,9 @@ export default function MaterialsLibrary({
           <span className="text-xs text-stone-400">{visibleMaterials.length} {uiText("份匹配材料")}</span>
         </div>
         <details><summary className="cursor-pointer text-xs text-stone-500">{uiText("更多筛选")}{(selectedPractice || selectedUse || selectedTopic) && uiText(' · 已选择')}</summary><div className="mt-3 grid gap-3 sm:grid-cols-3">
-          <label className="text-xs text-stone-500">{uiText("练习方向")}<select aria-label={uiText("按练习方向筛选")} value={selectedPractice} onChange={event => setSelectedPractice(event.target.value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部练习方向")}</option>{PRACTICE_DIRECTIONS.map(item => <option key={item} value={item}>{uiText(item)}</option>)}</select></label>
-          <label className="text-xs text-stone-500">{uiText("表达用途")}<select aria-label={uiText("按表达用途筛选")} value={selectedUse} onChange={event => setSelectedUse(event.target.value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部表达用途")}</option>{EXPRESSION_USES.map(item => <option key={item} value={item}>{uiText(item)}</option>)}</select></label>
-          {!!topicOptions.length && <label className="text-xs text-stone-500">{uiText("话题")}<select aria-label={uiText("按话题筛选")} value={selectedTopic} onChange={event => setSelectedTopic(event.target.value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部话题")}</option>{topicOptions.map(topic => <option key={topic} value={topic}>{topic}</option>)}</select></label>}
+          <label className="text-xs text-stone-500">{uiText("练习方向")}<ChoiceSelect aria-label={uiText("按练习方向筛选")} value={selectedPractice} onValueChange={value => setSelectedPractice(value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部练习方向")}</option>{PRACTICE_DIRECTIONS.map(item => <option key={item} value={item}>{uiText(item)}</option>)}</ChoiceSelect></label>
+          <label className="text-xs text-stone-500">{uiText("表达用途")}<ChoiceSelect aria-label={uiText("按表达用途筛选")} value={selectedUse} onValueChange={value => setSelectedUse(value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部表达用途")}</option>{EXPRESSION_USES.map(item => <option key={item} value={item}>{uiText(item)}</option>)}</ChoiceSelect></label>
+          {!!topicOptions.length && <label className="text-xs text-stone-500">{uiText("话题")}<ChoiceSelect aria-label={uiText("按话题筛选")} value={selectedTopic} onValueChange={value => setSelectedTopic(value)} className="mt-2 w-full rounded-lg border border-stone-200 bg-white p-2.5 text-sm"><option value="">{uiText("全部话题")}</option>{topicOptions.map(topic => <option key={topic} value={topic}>{topic}</option>)}</ChoiceSelect></label>}
         </div></details>
       </section>}
       {!activeMaterial && !!recentMaterials.length && <section aria-label={uiText("最近学习")} className="flex flex-wrap items-center gap-2"><span className="mr-2 text-xs font-semibold text-stone-500">{uiText("最近学习")}</span>{recentMaterials.slice(0,3).map(material => <button key={material.id} onClick={() => openMaterial(material)} className="max-w-56 truncate rounded-full border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-900">{material.name}</button>)}</section>}
@@ -1950,7 +1951,7 @@ export default function MaterialsLibrary({
 
         {/* Right Side: Study workspace (Col Span: 8) */}
         <div id="material-study-workspace" className={`lg:col-span-12 flex-col space-y-6 ${activeMaterial ? 'flex' : 'hidden'}`}>
-          {activeMaterial && <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => setSelectedMaterialId(null)} className="inline-flex items-center gap-2 self-start rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600"><ArrowLeft className="h-3.5 w-3.5" />{uiText("返回场景材料")}</button><label className="flex items-center gap-2 text-xs text-stone-500">{uiText("词汇积累到")}<select aria-label={uiText("词汇积累方向")} value={learningCategory} onChange={event => setLearningCategory(event.target.value as WordCategory)} className="rounded-lg border border-stone-200 bg-white px-3 py-2 font-semibold text-stone-800"><option value="speaking">{uiText("口语表达")}</option><option value="listening">{uiText("听力词汇")}</option><option value="reading">{uiText("阅读词汇")}</option><option value="writing">{uiText("写作表达")}</option></select></label></div>}
+          {activeMaterial && <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => setSelectedMaterialId(null)} className="inline-flex items-center gap-2 self-start rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs text-stone-600"><ArrowLeft className="h-3.5 w-3.5" />{uiText("返回场景材料")}</button><label className="flex items-center gap-2 text-xs text-stone-500">{uiText("词汇积累到")}<ChoiceSelect aria-label={uiText("词汇积累方向")} value={learningCategory} onValueChange={value => setLearningCategory(value as WordCategory)} className="rounded-lg border border-stone-200 bg-white px-3 py-2 font-semibold text-stone-800"><option value="speaking">{uiText("口语表达")}</option><option value="listening">{uiText("听力词汇")}</option><option value="reading">{uiText("阅读词汇")}</option><option value="writing">{uiText("写作表达")}</option></ChoiceSelect></label></div>}
           
           {!activeMaterial ? (
             /* Workspace Empty State */
@@ -2393,9 +2394,9 @@ export default function MaterialsLibrary({
                             
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {/* Voice select */}
-                              <select
+                              <ChoiceSelect
                                 value={selectedTtsVoice}
-                                onChange={(e) => setSelectedTtsVoice(e.target.value)}
+                                onValueChange={value => setSelectedTtsVoice(value)}
                                 className="p-1 bg-white border border-stone-200 rounded text-[10px] text-stone-600 focus:outline-hidden"
                                 title={uiText("选择朗读发音人")}
                               >
@@ -2405,22 +2406,22 @@ export default function MaterialsLibrary({
                                     {v.name.slice(0, 15)} ({v.lang})
                                   </option>
                                 ))}
-                              </select>
+                              </ChoiceSelect>
 
                               {/* Speed multiplier */}
-                              <select
+                              <ChoiceSelect
                                 value={playbackSpeed}
-                                onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
+                                onValueChange={value => setPlaybackSpeed(parseFloat(value))}
                                 className="p-1 bg-white border border-stone-200 rounded text-[10px] text-stone-600 focus:outline-hidden"
                                 title={uiText("设置阅读语速")}
                               >
                                 <option value="0.75">{uiText("0.75x 慢速")}</option>
                                 <option value="0.9">{uiText("0.9x 略慢")}</option>
-                                <option value="1.0">{uiText("1.0x 标准")}</option>
+                                <option value="1">{uiText("1.0x 标准")}</option>
                                 <option value="1.15">{uiText("1.15x 略快")}</option>
                                 <option value="1.3">{uiText("1.3x 快速")}</option>
                                 <option value="1.5">{uiText("1.5x 挑战")}</option>
-                              </select>
+                              </ChoiceSelect>
 
                               {/* Play/Pause/Stop triggers */}
                               <div className="flex items-center gap-1">
@@ -3002,9 +3003,10 @@ export default function MaterialsLibrary({
                       <div className="grid grid-cols-3 gap-2">
                         <div className="col-span-1">
                           <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("词性 POS")}</label>
-                          <select
+                          <ChoiceSelect
+                            aria-label={uiText("词性 POS")}
                             value={quickPos}
-                            onChange={(e) => setQuickPos(e.target.value)}
+                            onValueChange={value => setQuickPos(value)}
                             className="w-full p-1.5 bg-stone-50 border rounded-lg text-xs"
                           >
                             <option value="v.">{uiText("v. 动词")}</option>
@@ -3012,7 +3014,7 @@ export default function MaterialsLibrary({
                             <option value="adj.">{uiText("adj. 形容词")}</option>
                             <option value="adv.">{uiText("adv. 副词")}</option>
                             <option value="phrase">{uiText("phrase 词伙")}</option>
-                          </select>
+                          </ChoiceSelect>
                         </div>
                         <div className="col-span-2">
                           <label className="text-[9px] font-mono text-stone-400 block uppercase">{uiText("中文释义 Chinese")}</label>

@@ -1,6 +1,9 @@
 @import "tailwindcss";
+@font-face { font-family:"Speak Display"; src:url('/fonts/auth-display.ttf') format('truetype'); font-weight:800; font-style:normal; font-display:swap; }
+@font-face { font-family:"Speak Text"; src:url('/fonts/auth-display-regular.ttf') format('truetype'); font-weight:400; font-style:normal; font-display:swap; }
+@font-face { font-family:"Learning Chinese"; src:url('/fonts/learning-chinese.woff2') format('woff2'); font-weight:100 900; font-style:normal; font-display:swap; }
 @theme {
-  --font-sans: "Speak Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-sans: "Speak Text", "Learning Chinese", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-serif: var(--font-sans);
   --font-mono: "SFMono-Regular", Consolas, monospace;
 }
@@ -282,9 +285,51 @@ body { margin:0; background:var(--ui-page); }
 }
 
 /* Match the display typography to the login brand without affecting study copy. */
-.app-sidebar .brand-word, .speaking-hero h1, .ui-page-title, .ui-section-title, .ui-scene-card h3 { font-family:"Speak Display","PingFang SC","Microsoft YaHei",sans-serif; }
+.app-sidebar .brand-word, .speaking-hero h1, .ui-page-title, .ui-section-title, .ui-scene-card h3 { font-family:"Speak Display","Learning Chinese","PingFang SC","Microsoft YaHei",sans-serif; }
 .ui-material-name,.material-ticket h3 { line-height:1.55; }
 #material-study-workspace .ui-reading-text { color:#20231d; }
 
 .account-goal-row input { flex:1; min-width:0; width:auto; }
 .account-goal-row>button { flex:none; white-space:nowrap; min-height:46px; }
+
+/* One type scale and one control language throughout the learner workspace. */
+.learner-app { font-family:var(--font-sans); text-rendering:optimizeLegibility; line-height:1.7; }
+.learner-app :where(button,input,textarea,select) { font-family:inherit; }
+.learner-app :where(h1,h2,h3,h4) { font-family:"Speak Display","Learning Chinese","PingFang SC",sans-serif; letter-spacing:-.025em; }
+.learner-app :where(.ui-page-title,.ui-section-title,.account-dialog h3) { font-weight:800; }
+.ui-reading-text { font-family:"Speak Text","Learning Chinese","PingFang SC",sans-serif; letter-spacing:.005em; }
+.learner-app .ui-choice { display:inline-block; position:relative; vertical-align:middle; min-width:0; padding:0; border:0; border-radius:0; background:transparent; }
+.learner-app .ui-choice-trigger { display:flex; justify-content:space-between; align-items:center; gap:16px; width:100%; min-height:52px; padding:13px 16px; border:1px solid #b6b0a4; border-radius:12px; background:#fffcf7; color:#171915; font-size:14px; font-weight:500; line-height:1.6; text-align:left; transition:border-color .18s,background .18s,box-shadow .18s; }
+.ui-choice-trigger>span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ui-choice-trigger>svg { flex:none; color:#1456ed; transition:transform .2s; }
+.learner-app .ui-choice-trigger[aria-expanded=true] { border-color:#1456ed; background:#fff; box-shadow:0 0 0 3px #1456ed12; }
+.ui-choice-trigger[aria-expanded=true]>svg { transform:rotate(180deg); }
+.learner-app .ui-choice-trigger:disabled { background:#eeeae3; border-color:#d5d0c8; color:#807c74; opacity:1; }
+.ui-choice-trigger:disabled>svg { color:#9f9b93; }
+.learner-app .language-switch { border:0; background:transparent; padding:0; gap:6px; }
+.learner-app .language-switch select { min-height:40px; border:0; border-radius:8px; background-color:transparent; font-size:12px; padding:8px 32px 8px 8px; }
+.ui-choice-overlay { position:relative; z-index:200; }
+.ui-choice-menu { position:fixed; overflow-y:auto; overscroll-behavior:contain; padding:7px; border:1px solid #b7b0a3; border-radius:16px; background:#fffcf7; box-shadow:0 12px 32px #30291524,0 3px 0 #cfc7b8; animation:choiceReveal .16s ease both; }
+.ui-choice-menu [role=option] { display:flex; align-items:center; justify-content:space-between; gap:16px; min-height:46px; padding:11px 12px; border-radius:9px; font-size:14px; font-weight:400; line-height:1.7; color:#302f29; cursor:pointer; }
+.ui-choice-menu [role=option]>svg { flex:none; }
+.ui-choice-menu [role=option][data-active=true] { background:#eee9df; }
+.ui-choice-menu [role=option][aria-selected=true] { background:#1456ed; color:#fff; font-weight:650; }
+.ui-choice-menu [role=option][aria-selected=true][data-active=true] { background:#0d43bf; }
+.ui-choice-menu [role=option][aria-disabled=true] { opacity:.45; cursor:not-allowed; }
+.ui-filter-panel { border-color:#c9c1b4; padding:26px; }
+.ui-filter-panel label { font-size:13px; font-weight:600; letter-spacing:.02em; }
+.ui-filter-controls button { padding:10px 16px; border-radius:999px; font-size:13px; font-weight:600; transition:background .18s,color .18s; }
+.account-section button[aria-pressed] { min-height:48px; border-radius:12px; padding:12px 16px; font-size:14px; font-weight:500; }
+.account-section button[aria-pressed=true] { background:#1456ed; color:white; box-shadow:none; }
+.learner-app select { appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%231456ed' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 12px center; padding-right:38px; }
+@media (hover:hover) {
+  .ui-choice-trigger:not(:disabled):hover { border-color:#1456ed; background:#fff; }
+}
+@media (max-width:640px) {
+  .ui-filter-panel { padding:18px; }
+  .learner-app .ui-choice-trigger,.ui-choice-menu [role=option] { font-size:16px; }
+}
+@keyframes choiceReveal { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:translateY(0); } }
+@media (prefers-reduced-motion:reduce) {
+  .ui-choice-menu { animation:none; }
+}
